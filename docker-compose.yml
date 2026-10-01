@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: dot
+      POSTGRES_PASSWORD: dot
+      POSTGRES_DB: dot
+    ports:
+      - "55434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dot -d dot"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DOT_DATABASE_URL: postgresql://dot:dot@postgres:5432/dot
+      DOT_OBJECT_ROOT: /var/dot/objects
+    volumes:
+      - dotobjects:/var/dot/objects
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "dot.runtime.worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DOT_DATABASE_URL: postgresql://dot:dot@postgres:5432/dot
+      DOT_OBJECT_ROOT: /var/dot/objects
+    volumes:
+      - dotobjects:/var/dot/objects
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Slack Socket Mode and outbox delivery. Needs DOT_SLACK_BOT_TOKEN and DOT_SLACK_APP_TOKEN.
+  slack:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "dot.channels.slack"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DOT_DATABASE_URL: postgresql://dot:dot@postgres:5432/dot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["slack"]
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  # Build target only: `docker compose build sandbox`. Run containers are
+  # started per dot by the sandbox backend, never by compose.
+  sandbox:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    image: dot-sandbox
+    profiles: ["build"]
+
+volumes:
+  pgdata:
+  dotobjects:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.58.0.0/24

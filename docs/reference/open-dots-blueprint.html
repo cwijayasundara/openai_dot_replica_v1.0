@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Dots Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column (~72ch) with a sticky contents rail on wide screens; tables and code scroll in place. */
+:root{
+  --bg:#f5f6f8; --surface:#ffffff; --fg:#161a22; --muted:#5a6272; --line:#dde1e8;
+  --accent:#2748d8; --accent-soft:#e6eafc; --code-bg:#eef0f4;
+  --ok:#1d7a4a; --warn:#a15c00; --crit:#b3261e;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Onest", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1218; --surface:#161a22; --fg:#e7e9ee; --muted:#9aa2b2; --line:#2a303c;
+  --accent:#8ea2ff; --accent-soft:#1e2540; --code-bg:#1b2029;
+  --ok:#5fcf93; --warn:#f0a948; --crit:#ff8a80; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1218; --surface:#161a22; --fg:#e7e9ee; --muted:#9aa2b2; --line:#2a303c;
+  --accent:#8ea2ff; --accent-soft:#1e2540; --code-bg:#1b2029;
+  --ok:#5fcf93; --warn:#f0a948; --crit:#ff8a80; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.62;padding-inline:20px;padding-block:0 64px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:56px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr)}nav.toc{display:none}}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;padding-top:40px;font-size:13.5px}
+nav.toc p{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:4px 0 4px 12px;border-left:2px solid var(--line)}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;max-width:76ch}
+header.hero{padding-block:48px 28px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.dots{display:flex;gap:7px;margin-bottom:22px}
+.dots span{width:11px;height:11px;border-radius:50%;background:var(--accent)}
+.dots span:nth-child(2){opacity:.65}.dots span:nth-child(3){opacity:.4}.dots span:nth-child(4){opacity:.2}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(2rem,4.2vw,2.9rem);line-height:1.08;letter-spacing:-.02em;margin:0 0 14px;text-wrap:balance}
+.lede{font-size:1.12rem;color:var(--muted);margin:0;max-width:62ch}
+.meta{font-family:var(--f-mono);font-size:12px;color:var(--muted);margin-top:18px}
+h2{font-family:var(--f-display);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;line-height:1.2;margin:56px 0 12px;text-wrap:balance;scroll-margin-top:24px}
+h3{font-family:var(--f-display);font-weight:500;font-size:1.18rem;margin:30px 0 8px}
+p,li{max-width:70ch}
+a{color:var(--accent)}
+ul,ol{padding-left:1.3em}
+li{margin:4px 0}
+strong{font-weight:600}
+code{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.55;margin:14px 0 20px}
+pre code{background:none;padding:0;font-size:inherit}
+.tbl{overflow-x:auto;margin:16px 0 24px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--bg)}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.callout{background:var(--accent-soft);border-radius:8px;padding:14px 18px;margin:18px 0}
+.callout p{margin:0}
+.verdict{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:22px 0}
+.verdict h3{margin-top:0}
+.pill{display:inline-block;font-family:var(--f-mono);font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.p-ok{color:var(--ok)}.p-warn{color:var(--warn)}.p-crit{color:var(--crit)}
+.phase{display:grid;grid-template-columns:92px minmax(0,1fr);gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.phase b{font-family:var(--f-mono);font-size:12px;color:var(--accent);font-weight:500;padding-top:3px}
+.phase p{margin:0}
+.src li{font-size:14px}
+pre.mermaid{background:var(--surface);text-align:center}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <a href="#what">What Dots is</a>
+  <a href="#primitives">The 10 primitives</a>
+  <a href="#arch">Reference architecture</a>
+  <a href="#models">Model strategy</a>
+  <a href="#code">Code skeleton</a>
+  <a href="#guardian">Guardian and permissions</a>
+  <a href="#learning">Learning loop</a>
+  <a href="#cost">Cost envelope</a>
+  <a href="#plan">Build plan</a>
+  <a href="#gaps">Gaps and risks</a>
+  <a href="#sources">Sources</a>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+  <p class="eyebrow">Teardown and build guide · 30 Sep 2026</p>
+  <h1>Rebuilding OpenAI's dots on LangGraph, Deep Agents and Fireworks</h1>
+  <p class="lede">What OpenAI shipped on 29 September, what it is made of, and how to build an open equivalent with Kimi K3 and GLM-5.3 on Fireworks.</p>
+  <p class="meta">Prepared for CK · stack: langchain 1.x · langgraph · deepagents ≥0.6 · Fireworks serverless</p>
+</header>
+
+<h2 id="what">What Dots is</h2>
+<p>Dots are always-on agents that OpenAI launched at DevDay on 29 September 2026. They run on GPT-6 Astra. Each dot has its own cloud computer and browser, connects to 4,000+ apps, and can be reached from ChatGPT, Slack and Teams, with texting coming soon. You give it tasks and ideas in one ongoing conversation instead of separate threads. It works around the clock, researches in the background, and learns your preferences from feedback.</p>
+<p>The product is mostly a harness, not a new model. Almost everything OpenAI describes is orchestration: a persistent agent identity, a sandboxed computer, channel adapters, a task queue, memory, a scheduler for proactive work, and a safety reviewer that sits in front of every consequential action. All of these can be built from open parts. The model is the one piece you swap.</p>
+<div class="callout"><p><strong>Launch facts.</strong> Pro, Business Premium and Enterprise (incl. Edu/Healthcare) in eligible markets. One dot included per plan; more dots, speed and monthly work allowance to be sold later. Specialist dots for enterprises get their own identity, credentials and system access, with Microsoft Agent 365 governance. OpenAI held back GPT-6.1 Astra because it "didn't quite meet the bar of staying within scope and authorization" (CBS).</p></div>
+
+<h2 id="primitives">The 10 primitives, and what they map to</h2>
+<p>This is the decomposition I'd build against. The left column is what OpenAI disclosed; the right column is the open component that does the same job.</p>
+<div class="tbl"><table>
+<thead><tr><th>#</th><th>Dots primitive</th><th>What OpenAI says</th><th>Your stack</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><strong>Persistent identity</strong></td><td>One named dot per user, avatar, same context across channels</td><td>One LangGraph <code>thread_id</code> per dot (not per chat). Assistant config versioned in LangGraph Platform / your config_driven packs</td></tr>
+<tr><td>2</td><td><strong>Own cloud computer</strong></td><td>Dedicated computer and browser; your device only if you connect it</td><td>Deep Agents sandbox backend (Daytona, Modal or Runloop) → <code>execute</code> tool. Playwright or browser MCP inside the sandbox</td></tr>
+<tr><td>3</td><td><strong>One continuous thread</strong></td><td>"Keep bringing it new tasks… without juggling separate threads"</td><td>Supervisor deep agent + <strong>async subagents</strong> (<code>start_async_task</code>, <code>check_async_task</code>…) so new messages never block on running work</td></tr>
+<tr><td>4</td><td><strong>Multi-channel</strong></td><td>ChatGPT, Slack, Teams; SMS soon; voice calls</td><td>Channel adapters (Slack Bolt, Bot Framework, Twilio) that normalise to one <code>runs.create</code> on the dot thread. Voice via LiveKit Agents or Pipecat</td></tr>
+<tr><td>5</td><td><strong>4,000+ apps</strong></td><td>Plugins give actions: PRs, docs, analyses, proposals</td><td>MCP servers via <code>langchain-mcp-adapters</code>, plus a hosted auth layer (Composio or Arcade) for OAuth breadth</td></tr>
+<tr><td>6</td><td><strong>Proactive research</strong></td><td>Background work with <em>read-only</em> app access</td><td>LangGraph cron on the dot thread, run against a <em>separate read-only toolset</em> and a cheap model; outputs go to a findings inbox</td></tr>
+<tr><td>7</td><td><strong>Learns from feedback</strong></td><td>Adapts to your standards over time</td><td>StoreBackend routed at <code>/memories/</code>, <code>AGENTS.md</code> via <code>memory=</code>, skills via <code>skills=</code>, plus a nightly reflection job that edits them</td></tr>
+<tr><td>8</td><td><strong>Auto-review ("Guardian")</strong></td><td>Checks account-affecting actions against your instructions and safety rules</td><td>Tool-call middleware (<code>wrap_tool_call</code>) that runs a separate reviewer model before execution</td></tr>
+<tr><td>9</td><td><strong>Allow / approve / block rules</strong></td><td>User-set rules per action; drafts not sends by default</td><td>Policy table → <code>interrupt_on</code> for approve, middleware deny for block, Deep Agents <code>permissions=</code> for files</td></tr>
+<tr><td>10</td><td><strong>Secrets never reach the model</strong></td><td>Password manager without model exposure; password changes stay with you</td><td>Credentials resolved server-side inside tools from a vault; the model only sees handles. Credential-changing tools are hard-blocked</td></tr>
+</tbody></table></div>
+
+<h2 id="arch">Reference architecture</h2>
+<p>Three planes: channels in front, the dot runtime in the middle, and the sandbox, tools and memory behind it. The Guardian sits on the only path from the agent to anything with side effects.</p>
+<pre class="mermaid">
+flowchart LR
+  subgraph Channels
+    S["Slack"] --> R
+    T["Teams"] --> R
+    W["Web or mobile app"] --> R
+    V["Voice via LiveKit"] --> R
+    X["SMS via Twilio"] --> R
+  end
+  R["Channel router, one thread per dot"] --> D
+  subgraph Runtime["LangGraph Platform"]
+    D["Dot supervisor, GLM-5.3"] --> A1["Async subagent: coder, Kimi K3"]
+    D --> A2["Async subagent: researcher, GLM-5.3"]
+    D --> A3["Async subagent: browser operator, Kimi K3"]
+    C["Cron: proactive sweep, Flash, read-only"] --> F[("Findings inbox")]
+    F --> D
+  end
+  D --> G{"Guardian: policy + reviewer"}
+  A1 --> G
+  A3 --> G
+  G -->|allow| TL["Tools: MCP and Composio"]
+  G -->|approve| H["Human approval in channel"]
+  G -->|block| B["Refuse and log"]
+  TL --> SB["Sandbox computer: Daytona or Modal"]
+  D <--> M[("Memory store, AGENTS.md, skills")]
+  RJ["Nightly reflection"] --> M
+</pre>
+
+<h2 id="models">Model strategy on Fireworks</h2>
+<p>Don't run everything on one model. Dots is a mix of long-horizon planning, cheap always-on polling, and fast review calls, and the three current Fireworks options fit those roles well.</p>
+<div class="tbl"><table>
+<thead><tr><th>Model</th><th>Fireworks id</th><th>In / cached / out per 1M</th><th>Context</th><th>Role in the dot</th></tr></thead>
+<tbody>
+<tr><td><strong>Kimi K3</strong><br/>2.8T MoE, 104B active, vision</td><td><code>accounts/fireworks/models/kimi-k3</code></td><td class="num">$3.00 / $0.30 / $15.00</td><td class="num">1M</td><td>Hard long-horizon work: coding subagent, browser operator (screenshots), complex document work</td></tr>
+<tr><td><strong>GLM-5.3</strong><br/>743B MoE, text-only</td><td><code>accounts/fireworks/models/glm-5p3</code></td><td class="num">$1.40 / $0.26 / $4.40</td><td class="num">~1M</td><td>Default supervisor and research subagent. Best cost per unit of agentic capability here</td></tr>
+<tr><td><strong>GLM-5.3-Flash</strong><br/>320B MoE, 18B active, vision</td><td><code>accounts/fireworks/models/glm-5p3-flash</code></td><td class="num">$0.15 / $0.03 / $0.50</td><td class="num">~1M</td><td>Guardian reviewer, proactive sweeps, triage of inbound messages, summarisation, memory reflection drafts</td></tr>
+</tbody></table></div>
+<h3>Things that will bite you</h3>
+<ul>
+<li><strong>Reasoning history.</strong> Fireworks notes Kimi K3 is sensitive to thinking-history preservation. If reasoning content is dropped between tool turns, long runs degrade. A past <code>langchain-fireworks</code> bug (issue #34342) did not surface <code>reasoning_content</code>. Pin a current version and assert it round-trips in a test before anything else.</li>
+<li><strong>Prompt caching is your cost model.</strong> Cached input is 10× cheaper on Kimi K3 and about 5× on GLM-5.3. Keep the system prompt, tool schemas, <code>AGENTS.md</code> and skills index as a stable prefix, and put volatile content at the end.</li>
+<li><strong>GLM-5.3 is text-only.</strong> Browse with the accessibility tree / DOM when it's the operator; route screenshot tasks to Kimi K3 or Flash.</li>
+<li><strong>Tune the harness per model.</strong> Deep Agents 0.6 added harness profiles for this. Tool descriptions and the todo prompt that work on one model often need rewording for another; test per model rather than assume.</li>
+<li><strong>Data residency.</strong> Fireworks serves both models with zero data retention by default and has US-only tiers. Check EU requirements for UK/EU clients.</li>
+</ul>
+
+<h2 id="code">Code skeleton</h2>
+<p>A minimal but complete shape. Parameter names follow the current Deep Agents docs; confirm backend constructor signatures and the async-subagent spec class against your installed version, since both have moved between releases.</p>
+
+<h3>1. Models</h3>
+<pre><code>from langchain_fireworks import ChatFireworks
+
+FW = "accounts/fireworks/models/"
+supervisor = ChatFireworks(model=FW + "glm-5p3", temperature=0.2, max_tokens=8192)
+heavy      = ChatFireworks(model=FW + "kimi-k3", temperature=0.2, max_tokens=16384)
+fast       = ChatFireworks(model=FW + "glm-5p3-flash", temperature=0)
+# Equivalent string form: init_chat_model("fireworks:accounts/fireworks/models/glm-5p3")</code></pre>
+
+<h3>2. Guardian middleware (primitives 8–10)</h3>
+<pre><code>from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
+from pydantic import BaseModel
+
+# allow | approve | block, set per dot by the user (Dots' "custom rules")
+POLICY = {
+    "read_*": "allow", "search_*": "allow", "draft_email": "allow",
+    "send_email": "approve", "create_pr": "approve", "pay_invoice": "approve",
+    "change_password": "block", "delete_repo": "block",
+}
+
+class Verdict(BaseModel):
+    in_scope: bool          # does this match what the user asked for?
+    risk: str               # low | medium | high
+    reason: str
+
+reviewer = fast.with_structured_output(Verdict)
+
+class Guardian(AgentMiddleware):
+    def wrap_tool_call(self, request, handler):
+        name = request.tool_call["name"]
+        rule = match_policy(POLICY, name)            # glob match, default "approve"
+        if rule == "block":
+            return ToolMessage(f"Blocked by policy: {name}", tool_call_id=request.tool_call["id"])
+        if rule == "allow" and is_read_only(name):
+            return handler(request)
+        v = reviewer.invoke(guardian_prompt(request.state, request.tool_call))
+        audit_log(name, rule, v)
+        if not v.in_scope or v.risk == "high":
+            return ToolMessage(f"Guardian refused: {v.reason}", tool_call_id=request.tool_call["id"])
+        return handler(request)   # "approve" tools are paused by interrupt_on (below)</code></pre>
+
+<h3>3. The dot (primitives 1–3, 7)</h3>
+<pre><code>from deepagents import create_deep_agent
+from deepagents.backends import CompositeBackend, StoreBackend
+from deepagents.backends.sandbox import DaytonaSandbox   # or Modal / Runloop
+
+approve = {"allowed_decisions": ["approve", "edit", "reject"]}
+
+dot = create_deep_agent(
+    model=supervisor,
+    system_prompt=DOT_PERSONA,              # name, tone, standing goals
+    tools=mcp_tools + composio_tools,       # primitive 5
+    memory=["/memories/AGENTS.md"],         # learned preferences
+    skills=["/memories/skills/"],           # learned procedures
+    backend=lambda rt: CompositeBackend(
+        default=DaytonaSandbox(rt, snapshot="dot-base"),   # the dot's computer
+        routes={"/memories/": StoreBackend(rt)},           # durable across threads
+    ),
+    subagents=[
+        {"name": "coder", "model": heavy, "description": "Code changes, tests, PRs",
+         "system_prompt": CODER_PROMPT, "tools": git_tools},
+        {"name": "researcher", "model": supervisor, "description": "Web and doc research",
+         "system_prompt": RESEARCH_PROMPT, "tools": search_tools},
+    ],
+    # Long jobs run as async subagents on Agent Protocol endpoints so the dot keeps
+    # answering new messages. Add them per your deepagents version's async spec.
+    interrupt_on={t: approve for t in tools_with_rule(POLICY, "approve")},
+    permissions=[{"path": "/memories/**", "allow": ["read"], "deny": ["delete"]}],
+    middleware=[Guardian()],
+    checkpointer=postgres_checkpointer, store=postgres_store,
+)</code></pre>
+
+<h3>4. Channel router (primitive 4)</h3>
+<pre><code>from langgraph_sdk import get_client
+lg = get_client(url=LANGGRAPH_URL)
+
+async def on_message(user_id: str, channel: str, text: str, reply_to):
+    thread_id = dot_thread_for(user_id)          # ONE thread per dot, all channels
+    await lg.runs.create(
+        thread_id, assistant_id="dot",
+        input={"messages": [{"role": "user", "content": f"[{channel}] {text}"}]},
+        multitask_strategy="enqueue",             # never drop a message mid-run
+        webhook=reply_url(channel, reply_to),
+    )
+# Interrupts from interrupt_on surface as approve / edit / reject buttons in the same channel.</code></pre>
+
+<h3>5. Proactive sweep (primitive 6)</h3>
+<pre><code>sweeper = create_deep_agent(
+    model=fast, tools=read_only_tools,           # hard read-only, not just "please don't"
+    system_prompt=SWEEP_PROMPT,                  # watchlist from /memories/goals.md
+    backend=lambda rt: CompositeBackend(default=StoreBackend(rt), routes={}),
+)
+await lg.crons.create_for_thread(
+    dot_thread_for(user_id), assistant_id="sweeper",
+    schedule="*/30 7-22 * * *",                  # waking hours; keep nights cheap
+    input={"messages": [{"role": "user", "content": "Run your sweep."}]},
+)
+# Findings are written to an inbox; the dot decides whether they are worth your attention.</code></pre>
+
+<h2 id="guardian">Guardian and permissions, in more detail</h2>
+<p>OpenAI's safety design is the part most worth copying exactly, because it is what makes an always-on agent tolerable. Their stated defaults: draft instead of send, no financial transactions without confirmation, read-only for background work, credential changes never delegated.</p>
+<ul>
+<li><strong>Two separate checks.</strong> A deterministic policy table runs first and is the source of truth. The reviewer model only adds an "is this in scope of what the user asked?" check on top. Never let the LLM reviewer loosen a rule.</li>
+<li><strong>Use a different model for review.</strong> Flash reviewing GLM-5.3 or Kimi K3 actions avoids the same model rationalising its own plan. Give it the original user instruction, the action, and the dot's standing rules, and nothing the tool returned from the web, which is where prompt injection comes from.</li>
+<li><strong>Tag tools by effect, not by name.</strong> Each tool declares <code>effect: read | write | external | financial | credential</code>. Policies attach to effects, so a newly added MCP server inherits sane defaults.</li>
+<li><strong>Specialist dots need their own identity.</strong> A procurement dot gets its own service principal and scoped credentials, not the user's. This is the Agent 365 point in OpenAI's launch.</li>
+<li><strong>Everything is auditable.</strong> Every tool call, Guardian verdict and approval goes to LangSmith traces plus an append-only audit table the user can view, which is the equivalent of watching the dot's computer.</li>
+</ul>
+
+<h2 id="learning">The learning loop</h2>
+<p>"Learns from feedback over time" without fine-tuning is the same problem as your RSI work: the model stays fixed and the harness evolves from memory. A practical version for a dot:</p>
+<ol>
+<li><strong>Capture.</strong> Every approve, edit, reject and explicit correction is an episode in the Store: the task, what the dot proposed, what the user did instead.</li>
+<li><strong>Reflect nightly.</strong> A job clusters the day's episodes and proposes edits to <code>/memories/AGENTS.md</code> (preferences, standards) and to skills (procedures that recurred three or more times).</li>
+<li><strong>Gate the change.</strong> Replay a small set of stored episodes against the edited harness and keep the edit only if approval rate or edit distance improves. Show the diff to the user once a week.</li>
+<li><strong>Keep it reversible.</strong> Version the memory files so a bad lesson can be rolled back.</li>
+</ol>
+<p>This is also where the "packs" idea from your config-driven platform fits: a specialist dot is a pack (persona, skills, tools, policy table, sweep schedule), and the learning loop edits the user's copy of that pack.</p>
+
+<h2 id="cost">Cost envelope per dot</h2>
+<p>Illustrative only, using Fireworks list prices above and these assumptions: 20 substantive tasks a day at 300k input (70% cached) and 20k output each; a proactive sweep every 30 minutes (48/day) at 50k input (80% cached) and 2k output; 200 Guardian reviews a day at 8k input and 300 output, uncached.</p>
+<div class="tbl"><table>
+<thead><tr><th>Component</th><th>Model</th><th>Per day</th><th>Per 30-day month</th></tr></thead>
+<tbody>
+<tr><td>Tasks, all on GLM-5.3</td><td>GLM-5.3</td><td class="num">$5.37</td><td class="num">$161</td></tr>
+<tr><td>Tasks, all on Kimi K3</td><td>Kimi K3</td><td class="num">$12.66</td><td class="num">$380</td></tr>
+<tr><td>Proactive sweeps</td><td>GLM-5.3-Flash</td><td class="num">$0.18</td><td class="num">$5</td></tr>
+<tr><td>Guardian reviews</td><td>GLM-5.3-Flash</td><td class="num">$0.27</td><td class="num">$8</td></tr>
+</tbody></table></div>
+<p>A sensible mix (GLM-5.3 by default, Kimi K3 for the hardest quarter of tasks) lands around $200–230 a month of inference per heavily used dot, before sandbox compute. Sandbox time, not tokens, is often the bigger line for an always-on computer, so suspend sandboxes between tasks and restore from a snapshot.</p>
+
+<h2 id="plan">Build plan</h2>
+<div class="phase"><b>Weeks 1–2</b><p><strong>Single-channel dot.</strong> Supervisor on GLM-5.3, sandbox backend, Store memory, Slack adapter, one thread per dot. Test reasoning-content round-trip on both models first.</p></div>
+<div class="phase"><b>Weeks 3–4</b><p><strong>Safety layer.</strong> Effect-tagged tools, policy table, Guardian middleware, interrupt-based approvals rendered as Slack buttons, audit log.</p></div>
+<div class="phase"><b>Weeks 5–6</b><p><strong>Always-on.</strong> Async subagents for coder and browser operator on Kimi K3, enqueue multitasking, read-only proactive sweeps on cron with a findings inbox.</p></div>
+<div class="phase"><b>Weeks 7–8</b><p><strong>Learning and reach.</strong> Episode capture, nightly reflection with replay gating, Teams and SMS adapters, Composio or Arcade for connector breadth.</p></div>
+<div class="phase"><b>Weeks 9+</b><p><strong>Specialist dots and voice.</strong> Packaged specialist dots with their own identities; LiveKit voice front end reusing the same thread.</p></div>
+
+<h2 id="gaps">Gaps and risks versus OpenAI</h2>
+<div class="tbl"><table>
+<thead><tr><th>Area</th><th>Gap</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>Model quality on long runs</td><td><span class="pill p-warn">medium</span> GPT-6 Astra is trained for this product; open models are strong but untuned for your harness</td><td>Per-model harness profiles, eval suite of real tasks, LoRA fine-tune on Fireworks once you have episode data</td></tr>
+<tr><td>Staying in scope</td><td><span class="pill p-crit">high</span> OpenAI itself held a model back over scope and authorisation</td><td>Deterministic policy first, reviewer second, read-only sweeps, drafts-not-sends by default</td></tr>
+<tr><td>Prompt injection via browsing and email</td><td><span class="pill p-crit">high</span> An always-on agent reads a lot of untrusted text</td><td>Reviewer never sees tool output; quarantine web content in subagents; no write tools in the browser subagent</td></tr>
+<tr><td>Connector breadth</td><td><span class="pill p-warn">medium</span> 4,000+ apps is a distribution advantage</td><td>MCP plus a hosted connector platform covers the common enterprise set</td></tr>
+<tr><td>Computer use</td><td><span class="pill p-warn">medium</span> Pixel-level UI operation is weaker on open models</td><td>Prefer APIs and DOM; use Kimi K3 vision only where no API exists</td></tr>
+<tr><td>Cost of always-on</td><td><span class="pill p-ok">low</span> Tokens are manageable with caching and Flash</td><td>Sandbox suspend/restore, waking-hours schedules, budget caps per dot</td></tr>
+</tbody></table></div>
+
+<div class="verdict">
+<h3>Recommendation</h3>
+<p>Build it as a harness on Deep Agents, with GLM-5.3 as the supervisor, Kimi K3 behind async subagents for hard work, and GLM-5.3-Flash for Guardian and sweeps. Spend your first real effort on the one-thread-per-dot runtime and the Guardian, because those are what make Dots different from a chat agent. Treat the learning loop as a direct application of your RSI research rather than a separate feature.</p>
+</div>
+
+<h2 id="sources">Sources</h2>
+<ul class="src">
+<li><a href="https://openai.com/index/introducing-dots/">Introducing dots, OpenAI</a></li>
+<li><a href="https://techcrunch.com/2026/09/29/openai-launches-dots-its-bubbly-agentic-avatar/">TechCrunch: OpenAI launches Dots</a></li>
+<li><a href="https://www.axios.com/2026/09/30/openai-dots-ai-agent-safety">Axios: dots and agent safety</a></li>
+<li><a href="https://9to5google.com/2026/09/29/openai-dots-agent/">9to5Google: always-on agents</a></li>
+<li><a href="https://www.cbsnews.com/news/sam-altman-openai-dots-chatgpt-agents-safety/">CBS News: Altman unveils dots</a></li>
+<li><a href="https://fireworks.ai/models/fireworks/kimi-k3">Fireworks: Kimi K3</a> · <a href="https://fireworks.ai/blog/kimik3-on-fireworks">Kimi K3 on Fireworks</a></li>
+<li><a href="https://fireworks.ai/models/fireworks/glm-5p3">Fireworks: GLM-5.3</a> · <a href="https://fireworks.ai/models/fireworks/glm-5p3-flash">GLM-5.3-Flash</a></li>
+<li><a href="https://docs.langchain.com/oss/python/deepagents/overview">Deep Agents overview</a> · <a href="https://www.langchain.com/blog/deep-agents-0-6">Deep Agents v0.6</a> · <a href="https://blockchain.news/news/langchain-deep-agents-v05-async-subagents-multimodal">v0.5 async subagents</a></li>
+<li><a href="https://github.com/langchain-ai/langchain/issues/34342">langchain issue #34342: Fireworks reasoning_content</a></li>
+</ul>
+</main>
+</div>
+
+</html>

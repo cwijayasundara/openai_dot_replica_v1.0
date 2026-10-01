@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenShell and Dot Use Cases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column (~72ch) with a sticky contents rail on wide screens; tables and code scroll in place. */
+:root{
+  --bg:#f5f6f8; --surface:#ffffff; --fg:#161a22; --muted:#5a6272; --line:#dde1e8;
+  --accent:#2748d8; --accent-soft:#e6eafc; --code-bg:#eef0f4;
+  --ok:#1d7a4a; --warn:#a15c00; --crit:#b3261e;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Onest", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1218; --surface:#161a22; --fg:#e7e9ee; --muted:#9aa2b2; --line:#2a303c;
+  --accent:#8ea2ff; --accent-soft:#1e2540; --code-bg:#1b2029;
+  --ok:#5fcf93; --warn:#f0a948; --crit:#ff8a80; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1218; --surface:#161a22; --fg:#e7e9ee; --muted:#9aa2b2; --line:#2a303c;
+  --accent:#8ea2ff; --accent-soft:#1e2540; --code-bg:#1b2029;
+  --ok:#5fcf93; --warn:#f0a948; --crit:#ff8a80; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.62;padding-inline:20px;padding-block:0 64px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:56px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr)}nav.toc{display:none}}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;padding-top:40px;font-size:13.5px}
+nav.toc p{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:4px 0 4px 12px;border-left:2px solid var(--line)}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;max-width:76ch}
+header.hero{padding-block:48px 28px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.dots{display:flex;gap:7px;margin-bottom:22px}
+.dots span{width:11px;height:11px;border-radius:50%;background:var(--accent)}
+.dots span:nth-child(2){opacity:.65}.dots span:nth-child(3){opacity:.4}.dots span:nth-child(4){opacity:.2}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(2rem,4.2vw,2.9rem);line-height:1.08;letter-spacing:-.02em;margin:0 0 14px;text-wrap:balance}
+.lede{font-size:1.12rem;color:var(--muted);margin:0;max-width:62ch}
+.meta{font-family:var(--f-mono);font-size:12px;color:var(--muted);margin-top:18px}
+h2{font-family:var(--f-display);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;line-height:1.2;margin:56px 0 12px;text-wrap:balance;scroll-margin-top:24px}
+h3{font-family:var(--f-display);font-weight:500;font-size:1.18rem;margin:30px 0 8px}
+p,li{max-width:70ch}
+a{color:var(--accent)}
+ul,ol{padding-left:1.3em}
+li{margin:4px 0}
+strong{font-weight:600}
+code{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.55;margin:14px 0 20px}
+pre code{background:none;padding:0;font-size:inherit}
+.tbl{overflow-x:auto;margin:16px 0 24px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--bg)}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.callout{background:var(--accent-soft);border-radius:8px;padding:14px 18px;margin:18px 0}
+.callout p{margin:0}
+.verdict{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:22px 0}
+.verdict h3{margin-top:0}
+.pill{display:inline-block;font-family:var(--f-mono);font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.p-ok{color:var(--ok)}.p-warn{color:var(--warn)}.p-crit{color:var(--crit)}
+.phase{display:grid;grid-template-columns:92px minmax(0,1fr);gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.phase b{font-family:var(--f-mono);font-size:12px;color:var(--accent);font-weight:500;padding-top:3px}
+.phase p{margin:0}
+.src li{font-size:14px}
+pre.mermaid{background:var(--surface);text-align:center}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <a href="#short">Short answers</a>
+  <a href="#planes">Runtime vs sandbox</a>
+  <a href="#openshell">What OpenShell gives you</a>
+  <a href="#options">Sandbox options</a>
+  <a href="#gcp">Deploying on GCP</a>
+  <a href="#adapter">OpenShell adapter</a>
+  <a href="#shape">Dot vs workbench</a>
+  <a href="#test">Fit test</a>
+  <a href="#catalogue">Use-case catalogue</a>
+  <a href="#onboarding">An onboarding dot</a>
+  <a href="#lessons">Paid-media lessons</a>
+  <a href="#next">Next steps</a>
+  <a href="#sources">Sources</a>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+  <p class="eyebrow">Follow-up · 30 Sep 2026</p>
+  <h1>Where OpenShell fits, and which knowledge work suits a dot</h1>
+  <p class="lede">An answer to two questions: can NVIDIA OpenShell replace the Deep Agents sandbox for local and GCP deployment, and which knowledge-work use cases fit a dots-style architecture. Grounded in your <code>recon_knowledge_work_agent_v2</code> repo and LangChain's paid media agent.</p>
+  <p class="meta">Reviewed: recon_knowledge_work_agent_v2 (deepagents 0.7.19, langgraph 1.2, Docker + ACA sandboxes) · OpenShell alpha · open-paid-media-agent</p>
+</header>
+
+<h2 id="short">Short answers</h2>
+<div class="verdict">
+<h3>1. OpenShell: yes, but as the sandbox, not the agent runtime</h3>
+<p>OpenShell does not replace Deep Agents or LangGraph. It replaces the <em>execution environment</em> behind the <code>execute</code> tool, and adds policy-enforced egress, credential injection and audit around it. LangChain already ships a reference that does exactly this (<code>openshell-deepagent</code>, "swap ModalBackend → OpenShellBackend and everything else stays the same").</p>
+<p>You also don't depend on any hosted Deep Agents sandbox today. Your repo already implements the sandbox protocol twice (<code>DockerSandbox</code>, <code>AcaSessionSandbox</code>, both subclasses of <code>BaseSandbox</code>). OpenShell would be a third implementation of that same seam.</p>
+<p>On GCP: the agent and API run fine on Cloud Run. The OpenShell gateway does not, because it runs k3s inside Docker and Cloud Run doesn't allow that. Put the gateway on a GCE VM or GKE, or use Google's own Cloud Run sandboxes or GKE Agent Sandbox instead.</p>
+</div>
+<div class="verdict">
+<h3>2. Dots fit continuous, multi-system work where the agent proposes and people approve</h3>
+<p>Your recon agent is a <strong>workbench</strong>: a bounded run with code gates that produces one artifact. A dot is the <strong>long-lived colleague</strong> that notices work arriving, starts workbench runs, chases missing inputs, reports, and learns each client's quirks. The pattern that scales is a dot on top with specialist workbenches underneath. Your code-owns-the-gates spine stays exactly as it is.</p>
+</div>
+
+<h2 id="planes">Runtime vs sandbox: three planes</h2>
+<p>It helps to separate three things that often get called "the runtime":</p>
+<div class="tbl"><table>
+<thead><tr><th>Plane</th><th>Job</th><th>In your repo today</th><th>Where OpenShell sits</th></tr></thead>
+<tbody>
+<tr><td><strong>Control</strong> (the agent's brain)</td><td>Model calls, planning, subagents, middleware, checkpoints, gates</td><td>Deep Agents + LangGraph spine in FastAPI, Postgres checkpointer</td><td>Not here. Keep LangGraph</td></tr>
+<tr><td><strong>Execution</strong> (the agent's computer)</td><td>Run code the model wrote, hold scratch files</td><td><code>RunSandbox</code>: Docker locally, ACA dynamic sessions on Azure</td><td><strong>Here.</strong> A sandbox per run or per dot</td></tr>
+<tr><td><strong>Governance</strong> (the rules around it)</td><td>What the computer can reach, which credentials it can use, audit</td><td>Docker flags: <code>network none</code>, read-only root, <code>cap_drop ALL</code>; executor <code>/seal</code></td><td><strong>Here.</strong> YAML policy, L7 proxy, credential placeholders, OCSF audit</td></tr>
+</tbody></table></div>
+<p>For the recon agent, the governance you need is simple: no network and no secrets, and Docker flags already do that well. OpenShell becomes valuable when the agent's computer <em>must</em> reach real systems with real credentials. That is the dot case: pulling from a sponsor's SFTP, reading SharePoint, calling Intacct's API in read-only mode.</p>
+
+<h2 id="openshell">What OpenShell gives you</h2>
+<ul>
+<li><strong>Four policy domains.</strong> Filesystem and process rules are fixed when the sandbox is created (Landlock, seccomp, unprivileged identity). Network and provider-credential rules hot-reload at runtime.</li>
+<li><strong>L7 egress control.</strong> The supervisor runs outside the workload and inspects HTTP method, path and GraphQL operation, so "read from this API, never write" is enforced below the model. Rules can also be bound to specific binaries.</li>
+<li><strong>Credential placeholders.</strong> The sandbox only holds placeholders. "The real credential is substituted outside the agent workload and only for an authorized endpoint." This is the infrastructure version of OpenAI's "passwords never reach the model".</li>
+<li><strong>Inference routing.</strong> Model traffic goes through policy-controlled routes to approved providers, which suits clients who restrict where prompts go (your repo already restricts runtime models to OpenAI).</li>
+<li><strong>Audit and policy advisor.</strong> Decisions are logged in OCSF format. When something is blocked, the agent gets a descriptive error and can propose a narrow policy change for human review.</li>
+<li><strong>Maturity.</strong> Apache 2.0, still alpha (0.1.0 "coming soon"), Kubernetes deployment experimental. The BlueField/Sentry monitoring layer in the blog post is NVIDIA hardware and optional. The software runtime works on Linux, Apple Silicon macOS and WSL 2.</li>
+</ul>
+<pre><code># Example from NVIDIA: GitHub read-only, and only for curl
+network_policies:
+  github_api:
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - path: /usr/bin/curl</code></pre>
+
+<h2 id="options">Sandbox options compared</h2>
+<p>All of these plug into the same <code>BaseSandbox</code> seam your <code>RunSandbox</code> class already defines, so the choice can differ per environment without touching agents or tools.</p>
+<div class="tbl"><table>
+<thead><tr><th>Option</th><th>Runs where</th><th>Isolation</th><th>Egress and credentials</th><th>State between <code>execute</code> calls</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td><strong>Docker</strong> (yours)</td><td>Laptop, any VM</td><td>Container, hardened flags</td><td>Off entirely; no credentials</td><td>Yes, one container per run</td><td><span class="pill p-ok">in use</span></td></tr>
+<tr><td><strong>ACA dynamic sessions</strong> (yours)</td><td>Azure</td><td>Hyper-V session</td><td>Pool-level egress; no credentials</td><td>Yes, per <code>identifier</code></td><td><span class="pill p-warn">unverified</span> per your code comment</td></tr>
+<tr><td><strong>OpenShell</strong></td><td>Laptop; GCE VM; GKE via Helm</td><td>Container + Landlock + seccomp</td><td>L7 policy, credential placeholders, inference routing, audit</td><td>Yes, persistent sandboxes (<code>--keep</code>)</td><td><span class="pill p-warn">alpha</span></td></tr>
+<tr><td><strong>Cloud Run sandboxes</strong></td><td>Inside your Cloud Run service</td><td>Sandbox per command, read-only overlay</td><td>Deny by default, <code>--allow-egress</code> per call; no env vars, no metadata server</td><td>No. Carry <code>/work</code> across calls with tar export/import</td><td><span class="pill p-warn">preview</span> since Jul 2026</td></tr>
+<tr><td><strong>GKE Agent Sandbox</strong></td><td>GKE Standard or Autopilot</td><td>gVisor pods, warm pools</td><td>Kubernetes NetworkPolicy; Workload Identity</td><td>Yes, stateful sandbox per claim</td><td><span class="pill p-ok">on GKE</span>, open source upstream</td></tr>
+<tr><td>LangSmith Sandbox</td><td>LangChain cloud</td><td>microVM</td><td>Managed</td><td>Yes</td><td><span class="pill p-crit">excluded</span> by your "no LangSmith at runtime" rule</td></tr>
+</tbody></table></div>
+
+<h2 id="gcp">Deploying on GCP</h2>
+<p>A layout that keeps Cloud Run for what it's good at:</p>
+<pre class="mermaid">
+flowchart LR
+  U["Workbench UI, Next.js"] --> A
+  subgraph CR["Cloud Run"]
+    A["API + LangGraph spine + Deep Agents"]
+  end
+  A --> PG[("Cloud SQL Postgres: checkpoints, mapping history")]
+  A --> GCS[("GCS: uploads, artifacts")]
+  A -->|"recon jobs: no network"| S1["Cloud Run sandbox or GKE Agent Sandbox"]
+  A -->|"dot jobs: needs SaaS access"| GW["OpenShell gateway on GKE or GCE"]
+  GW --> S2["OpenShell sandbox"]
+  S2 -->|"policy-checked, credential injected"| EXT["SharePoint, SFTP, Intacct read-only"]
+</pre>
+<ul>
+<li><strong>Recon-style jobs</strong> (no network, no secrets): Cloud Run sandboxes are the least infrastructure, since they run inside the API's own instance at no extra cost. The catch is that each <code>sandbox do</code> is fresh, so your adapter has to export and import <code>/work</code> as a tar on each call. If that latency hurts the recipe engineer's loop, use GKE Agent Sandbox, which keeps a stateful pod per run and matches your Docker contract more closely.</li>
+<li><strong>Dot-style jobs</strong> (network plus credentials): OpenShell on GKE or a small GCE VM. This is where its policy and credential model earns its place.</li>
+<li><strong>Locally:</strong> keep Docker as the default. Add OpenShell as a second local backend so policies are written and tested on the laptop before they reach GCP.</li>
+<li><strong>This client:</strong> your repo targets Azure (Bicep, ACA, Azure OpenAI). The GCP layout above is for your other deployments. For this one, finish the ACA spike your code comment calls for.</li>
+</ul>
+
+<h2 id="adapter">An OpenShell adapter for your seam</h2>
+<p>A sketch of a third <code>RunSandbox</code>, following the same <code>/in</code>, <code>/work</code>, <code>/ref</code>, <code>/skills</code> contract. Port the exec and file calls from <code>OpenShellBackend</code> in <code>langchain-ai/openshell-deepagent</code> (built on the <code>openshell</code> PyPI SDK's <code>SandboxSession.exec()</code>) rather than trusting the method names below. Then run your existing <code>tests/sandbox/test_sandbox_contract.py</code> against it.</p>
+<pre><code># src/onboarding_agent/sandbox/openshell_backend.py
+class OpenShellSandbox(RunSandbox):
+    """One OpenShell sandbox per run. Same mount contract as DockerSandbox."""
+
+    def __init__(self, run_id: str, mounts: SandboxMounts, *, policy: Path, gateway: str | None = None):
+        self._run_id, self._mounts, self._policy, self._gateway = run_id, mounts, policy, gateway
+        self._session = None
+
+    def start(self) -> None:
+        # create sandbox "onb-{run_id}" from the onb-sandbox image with self._policy,
+        # copy /in, /ref and /skills, then seal them read-only (as the ACA executor does)
+        ...
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        out = self._session.exec(command, timeout=timeout or DEFAULT_TIMEOUT_S)   # port from openshell-deepagent
+        text, truncated = truncate(out.output)
+        return ExecuteResponse(output=text, exit_code=out.exit_code, truncated=truncated)
+
+    # upload_files / download_files: restrict writes to /work exactly like DockerSandbox
+    def close(self) -> None: ...   # delete the sandbox unless keep=True for a dot</code></pre>
+<pre><code># policies/recon.yaml: mirror the Docker contract (sketch, check against the schema)
+filesystem:
+  read_only: [/in, /ref, /skills, /usr, /lib]
+  read_write: [/work, /tmp]
+process:
+  run_as: runner
+network_policies: {}      # deny all egress, same as network_mode=none</code></pre>
+<p>Add <code>sandbox_backend = "openshell"</code> to <code>Settings</code> and an <code>openshell_sandbox_factory</code> in <code>assembly.py</code>, next to the Docker and ACA factories. Nothing in the agents, tools or spine changes.</p>
+
+<h2 id="shape">Dot vs workbench</h2>
+<p>This distinction decides what to build. The three systems you referenced sit at different points:</p>
+<div class="tbl"><table>
+<thead><tr><th></th><th>Your recon agent</th><th>LangChain paid media agent</th><th>OpenAI dots</th></tr></thead>
+<tbody>
+<tr><td>Shape</td><td>Workbench: one run, one artifact</td><td>Dot-lite: weekly cycle plus Slack follow-ups</td><td>Dot: always on, open-ended</td></tr>
+<tr><td>Trigger</td><td>Analyst uploads a file</td><td>Monday cron, Slack mention</td><td>Any channel, events, own initiative</td></tr>
+<tr><td>Lifetime of state</td><td>One run (thread = run id)</td><td>Report thread, plus wiki updated over time</td><td>One thread for the life of the dot</td></tr>
+<tr><td>Who decides</td><td>Code gates, analyst approves</td><td>Agent proposes, authorised Slack user approves</td><td>Rules plus Guardian, user approves</td></tr>
+<tr><td>Learns</td><td>Per-sponsor mapping history</td><td>Wiki of decisions and campaign context</td><td>Preferences and standards</td></tr>
+</tbody></table></div>
+<p>The point: a dot doesn't replace your workbench, it <em>operates</em> it. Paid media shows the middle ground, which is the right first step for enterprise knowledge work: scheduled cycles and chat follow-ups in one runtime, with human approval on every change.</p>
+
+<h2 id="test">A fit test for dot-shaped work</h2>
+<p>Score a candidate process 0–2 on each. Eight or more out of twelve is a good dot candidate.</p>
+<div class="tbl"><table>
+<thead><tr><th>Question</th><th>0</th><th>2</th></tr></thead>
+<tbody>
+<tr><td><strong>Recurring?</strong> Does the work come back on a cadence or on events?</td><td>One-off project</td><td>Daily or weekly, or event-driven</td></tr>
+<tr><td><strong>Spans systems?</strong> How many tools does a person switch between?</td><td>One system</td><td>Three or more (mail, files, ERP, chat, BI)</td></tr>
+<tr><td><strong>Judgment over compute?</strong> After code does the maths, is there interpretation left?</td><td>Pure ETL; write code instead</td><td>Explaining, prioritising, drafting, chasing</td></tr>
+<tr><td><strong>Verifiable?</strong> Can code or a person check the output quickly?</td><td>Only by redoing it</td><td>Reconciles, validates, or diffs</td></tr>
+<tr><td><strong>Reversible?</strong> Can actions be staged as proposals?</td><td>Irreversible, real-time</td><td>Draft, stage, approve, apply</td></tr>
+<tr><td><strong>Learnable?</strong> Is there a feedback signal to improve on?</td><td>No one reviews it</td><td>Approvals, edits, corrections every cycle</td></tr>
+</tbody></table></div>
+
+<h2 id="catalogue">Use-case catalogue for knowledge work</h2>
+<p>Ranked for your context: financial services, fund administration, insurance and consulting delivery. Scores use the fit test above and are my judgment.</p>
+<div class="tbl"><table>
+<thead><tr><th>Use case</th><th>What the dot does continuously</th><th>Workbench underneath</th><th>Fit</th></tr></thead>
+<tbody>
+<tr><td><strong>Fund admin client onboarding</strong></td><td>Watches the data room for new exports, starts runs per entity, drafts data requests to the sponsor, reports status to the engagement lead</td><td>Your recon spine, one entity at a time</td><td class="num">11/12</td></tr>
+<tr><td><strong>Daily reconciliation and break management</strong></td><td>Runs bank-to-ledger and custodian-to-GL matching, investigates breaks, proposes adjusting entries, ages open items</td><td>Deterministic matcher plus an investigation subagent</td><td class="num">11/12</td></tr>
+<tr><td><strong>Month-end close co-ordinator</strong></td><td>Tracks the close checklist, chases owners, drafts variance commentary, assembles the pack</td><td>Variance calculations in code, narrative by model</td><td class="num">10/12</td></tr>
+<tr><td><strong>Paid media / marketing ops</strong></td><td>Weekly cross-channel analysis, proposes bid, budget and copy changes via approval cards</td><td>Per-platform subagents (LangChain's design)</td><td class="num">10/12</td></tr>
+<tr><td><strong>AP and procurement</strong></td><td>Reads invoices, three-way matches, codes, stages payment runs</td><td>Extraction plus match rules in code</td><td class="num">10/12</td></tr>
+<tr><td><strong>Contract obligation tracking</strong></td><td>Extracts obligations, watches renewal and notice dates, checks new drafts against the playbook</td><td>Your legal document intelligence retrieval</td><td class="num">9/12</td></tr>
+<tr><td><strong>Insurance submission triage</strong></td><td>Reads broker submissions, runs clearance, extracts exposure data, routes to underwriters with a summary</td><td>Extraction and appetite rules</td><td class="num">9/12</td></tr>
+<tr><td><strong>Delivery PMO</strong></td><td>Reads Jira or ADO and meeting notes, keeps the RAID log current, drafts weekly status</td><td>Metrics in code, narrative by model</td><td class="num">9/12</td></tr>
+<tr><td><strong>RFP and proposal operations</strong></td><td>Screens incoming RFPs for go/no-go, drafts from past answers, tracks Q&amp;A deadlines</td><td>Retrieval over past bids</td><td class="num">8/12</td></tr>
+<tr><td><strong>Research and regulatory watch</strong></td><td>Monitors sources (FCA, SEC, vendor releases), updates a living brief, flags items that affect clients</td><td>Your ai_researcher loop</td><td class="num">8/12</td></tr>
+<tr><td>Customer feedback to fix</td><td>Clusters feedback, reproduces bugs, opens PRs for review (OpenAI's example)</td><td>Coding subagent in a sandbox</td><td class="num">8/12</td></tr>
+<tr><td>One-off data migration cutover</td><td>Little to do between runs</td><td>A workbench alone is enough</td><td class="num">4/12</td></tr>
+</tbody></table></div>
+<div class="callout"><p><strong>Where to start.</strong> Your onboarding work and reconciliation both score highest and share infrastructure: a deterministic SDK, per-client history, code gates and analyst approval. Build the dot layer once over the recon spine, then add reconciliation as a second workbench under the same dot.</p></div>
+
+<h2 id="onboarding">What an onboarding dot looks like</h2>
+<p>A thin, always-on layer over the code you already have. The rule from your <code>CLAUDE.md</code> carries over unchanged: agents propose, code decides, humans approve. The dot can start runs and prepare evidence but can never pass a gate.</p>
+<div class="tbl"><table>
+<thead><tr><th>Dot capability</th><th>How it maps onto your repo</th></tr></thead>
+<tbody>
+<tr><td>Notice new work</td><td>Proactive sweep (cron) over the sponsor drop location with <em>read-only</em> credentials, via an OpenShell policy or a read-only service account. Classifies files by entity</td></tr>
+<tr><td>Start and track runs</td><td>Tools that call <code>Workbench.create</code>, <code>advance</code> and <code>snapshot</code>. No tool for <code>respond</code>: gates stay with the analyst in the UI</td></tr>
+<tr><td>Chase missing inputs</td><td>When a brief has open questions, drafts the sponsor email with evidence from the run; the analyst sends it</td></tr>
+<tr><td>Report</td><td>Daily Teams digest: runs by phase, blockers from <code>brief_blockers</code> and <code>findings_blockers</code>, ageing</td></tr>
+<tr><td>Learn per client</td><td>A per-sponsor wiki (layouts, naming habits, who answers what) beside your per-sponsor mapping history. Generic method stays in <code>workspace/skills</code></td></tr>
+<tr><td>Capability profiles</td><td>Your <code>ToolSurfacePolicy</code> already is this: one profile for the scheduled sweep, one for chat, one for the recipe engineer</td></tr>
+<tr><td>One thread</td><td>A dot thread per engagement (not per run), holding run ids as references; each workbench run keeps its own thread</td></tr>
+</tbody></table></div>
+
+<h2 id="lessons">Lessons from the paid media agent</h2>
+<ul>
+<li><strong>Model for judgment, code for computation.</strong> Their first version put raw data in context: 3.9M input tokens, 1,112 seconds and $3 per report. Moving calculations to Python made it 40× cheaper and 13× faster (18 minutes to 85 seconds). Your onboarding SDK already follows this rule; keep it for every new workbench.</li>
+<li><strong>Five context layers.</strong> System prompt as a map, skills for reusable method, a wiki for company-specific context, live tools for current data, and code for hard rules. Their test: "A skill should work at another company, whereas the wiki should not." Your skills folder is the first half; the per-sponsor wiki is the missing half.</li>
+<li><strong>One runtime, a capability profile per entry point.</strong> They began with two agents (scheduled and Slack) and merged them, so the agent can answer follow-ups in the thread that produced a report.</li>
+<li><strong>Tool discovery for large tool sets.</strong> Search, read schema, then run cut context from 38k to 12k tokens across 200+ tools. You'll need this once a dot has many connectors.</li>
+<li><strong>Isolation is explicit.</strong> "A subagent gives you a separate context window. The rest of the isolation model is up to you." Give each subagent its own output location, completion state and tool list.</li>
+<li><strong>Approval cards check who approves.</strong> Slack Block Kit cards show current against proposed values, and only authorised user ids can apply them. Your spine's <code>approvers</code> list is the same idea.</li>
+<li><strong>Results worth quoting to clients.</strong> Paid pipeline share went from 0 to 20% in six months, cost per lead fell 30%, and $5K a month of agency reporting was cut.</li>
+</ul>
+
+<h2 id="next">Next steps</h2>
+<div class="phase"><b>Step 1</b><p><strong>Add a third sandbox backend.</strong> Port <code>OpenShellBackend</code> into <code>OpenShellSandbox(RunSandbox)</code> with a deny-all policy and pass the existing sandbox contract tests. This settles the local question.</p></div>
+<div class="phase"><b>Step 2</b><p><strong>Choose the GCP execution backend.</strong> Spike Cloud Run sandboxes with tar-carried <code>/work</code> against the recipe engineer's live eval. If wall time regresses noticeably, switch to GKE Agent Sandbox.</p></div>
+<div class="phase"><b>Step 3</b><p><strong>Add the dot layer.</strong> A Deep Agents supervisor with three capability profiles (sweep, chat, digest), tools over <code>Workbench</code> (never <code>respond</code>), a Teams adapter and a per-sponsor wiki in the Store.</p></div>
+<div class="phase"><b>Step 4</b><p><strong>Let the dot reach real systems.</strong> Move sweep connectors into OpenShell with read-only L7 policy and credential placeholders. Log every decision.</p></div>
+<div class="phase"><b>Step 5</b><p><strong>Add a second workbench.</strong> Reconciliation and break management under the same dot, reusing the SDK, gate and approval patterns.</p></div>
+
+<h2 id="sources">Sources</h2>
+<ul class="src">
+<li><a href="https://developer.nvidia.com/blog/nvidia-open-agent-safety-platform-a-reference-for-continuous-in-silicon-agent-monitoring">NVIDIA: Open Agent Safety Platform</a></li>
+<li><a href="https://github.com/NVIDIA/openshell">NVIDIA/OpenShell on GitHub</a> · <a href="https://docs.nvidia.com/openshell/latest/about/overview">OpenShell overview</a> · <a href="https://developer.nvidia.com/blog/add-runtime-controls-to-ai-agents-with-nvidia-openshell/">Runtime controls with OpenShell</a></li>
+<li><a href="https://github.com/langchain-ai/openshell-deepagent">langchain-ai/openshell-deepagent</a> · <a href="https://www.langchain.com/blog/deep-agents-code-on-nemoclaw-a-governed-blueprint-for-your-most-sensitive-code">Deep Agents Code on NemoClaw</a></li>
+<li><a href="https://cloud.google.com/blog/topics/developers-practitioners/google-cloud-run-sandboxes-are-in-public-preview/">Cloud Run sandboxes preview</a> · <a href="https://docs.cloud.google.com/run/docs/code-execution">Code execution in Cloud Run</a></li>
+<li><a href="https://docs.cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox">GKE Agent Sandbox</a> · <a href="https://github.com/kubernetes-sigs/agent-sandbox">kubernetes-sigs/agent-sandbox</a></li>
+<li><a href="https://www.langchain.com/blog/paid-media-agent">LangChain: paid media agent</a> · <a href="https://github.com/langchain-ai/open-paid-media-agent">open-paid-media-agent</a></li>
+<li>Local: recon_knowledge_work_agent_v2 (CLAUDE.md, sandbox/, graph/, middleware/guard.py, assembly.py)</li>
+</ul>
+</main>
+</div>
+
+</html>

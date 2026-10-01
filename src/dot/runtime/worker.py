@@ -1,0 +1,306 @@
+"""Inbox consumer. One supervisor turn per dot; other dots run in parallel."""
+
+from __future__ import annotations
+
+import signal
+import threading
+from collections.abc import Callable, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import Any
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+from dot.assembly import GraphRuntime, build_dot_agent, build_graph_runtime, dot_artifacts
+from dot.channels.base import DeliveringEventChannel
+from dot.channels.outbox import PostgresOutbox
+from dot.config import Settings, get_settings
+from dot.jobs.runner import JobRunner, run_job
+from dot.jobs.store import JobStore, PostgresJobStore
+from dot.middleware.guardian import GUARDIAN_INSTRUCTION_KEY
+from dot.persistence.db import Dot, InboxMessage, Json, PostgresRepositories, Repositories, make_pool, migrate
+from dot.runtime.locks import DotLocks
+from dot.runtime.router import CHANNEL_KEY, latest_channel, message_detail, render_inbound
+from dot.runtime.turns import EventChannel, PgEventChannel, TurnEvent, publish_graph_update
+from dot.safety.approvals import persist_interrupts, resume_command
+from dot.tools.native.deps import ToolDeps
+
+# How long to sleep when the inbox has nothing this worker can claim.
+_IDLE_WAIT_S = 0.2
+_SLACK_REF_KEYS = frozenset({"channel", "thread_ts"})
+
+TurnRunner = Callable[[Dot, str, Sequence[InboxMessage], EventChannel], None]
+
+
+class Worker:
+    def __init__(
+        self,
+        pool: ConnectionPool,
+        repos: Repositories,
+        events: EventChannel,
+        runner: TurnRunner,
+    ) -> None:
+        self._pool = pool
+        self._repos = repos
+        self._events = events
+        self._runner = runner
+        self._locks = DotLocks(pool)
+
+    def run_once(self) -> bool:
+        """Claim one dot and run one turn. False when nothing is runnable."""
+        skipped: set[str] = set()
+        while True:
+            dot_id = self._peek(skipped)
+            if dot_id is None:
+                return False
+            # Lock before taking row locks. Two workers that each hold a
+            # different inbox row and then wait on the same dot deadlock.
+            if not self._locks.try_acquire(dot_id):
+                skipped.add(dot_id)
+                continue
+            try:
+                batch = self._claim(dot_id)
+                if not batch:
+                    continue
+                dot = self._repos.get_dot(dot_id)
+                self._execute(dot, batch[0].profile, batch)
+                return True
+            finally:
+                self._locks.release(dot_id)
+
+    def _peek(self, skipped: set[str]) -> str | None:
+        with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            row = cur.execute(
+                """
+                SELECT dot_id FROM inbox
+                WHERE done_at IS NULL AND claimed_at IS NULL
+                  AND (source = 'approval' OR NOT EXISTS (
+                      SELECT 1 FROM dots WHERE dots.dot_id = inbox.dot_id AND dots.status = 'paused'))
+                  AND NOT (dot_id = ANY(%s::text[]))
+                ORDER BY created_at, id
+                LIMIT 1
+                """,
+                (list(skipped),),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["dot_id"])
+
+    def _claim(self, dot_id: str) -> list[InboxMessage]:
+        """Claim the leading same-profile run of pending rows for this dot.
+
+        ``FOR UPDATE SKIP LOCKED`` is the queue claim. Rows inserted after
+        this statement stay pending for the next turn.
+        """
+        with self._pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """
+                SELECT id, profile, source FROM inbox
+                WHERE dot_id = %s AND done_at IS NULL AND claimed_at IS NULL
+                  AND (source = 'approval' OR NOT EXISTS (
+                      SELECT 1 FROM dots WHERE dots.dot_id = inbox.dot_id AND dots.status = 'paused'))
+                ORDER BY created_at, id
+                FOR UPDATE SKIP LOCKED
+                """,
+                (dot_id,),
+            ).fetchall()
+            ids: list[int] = []
+            profile: str | None = None
+            for row in rows:
+                if ids and (row["source"] == "approval" or rows[0]["source"] == "approval"):
+                    break
+                if profile is None:
+                    profile = str(row["profile"])
+                if row["profile"] != profile:
+                    break
+                ids.append(int(row["id"]))
+            if not ids:
+                return []
+            cur.execute("UPDATE inbox SET claimed_at = now() WHERE id = ANY(%s)", (ids,))
+        return [self._repos.get_inbox(message_id) for message_id in ids]
+
+    def _execute(self, dot: Dot, profile: str, batch: Sequence[InboxMessage]) -> None:
+        for message in batch:
+            if message.source != "approval":
+                self._events.publish(TurnEvent(dot.dot_id, "message", message_detail(message)))
+        try:
+            self._runner(dot, profile, batch, self._events)
+        except Exception as exc:
+            self._events.publish(TurnEvent(dot.dot_id, "error", {"error": str(exc)}))
+            self._finish(batch, str(exc))
+            return
+        self._finish(batch, None)
+
+    def _finish(self, batch: Sequence[InboxMessage], error: str | None) -> None:
+        done_at = datetime.now(UTC)
+        for message in batch:
+            current = self._repos.get_inbox(message.id)
+            self._repos.update_inbox(replace(current, done_at=done_at, error=error))
+
+
+def run_agent_turn(
+    dot: Dot,
+    profile: str,
+    batch: Sequence[InboxMessage],
+    events: EventChannel,
+    *,
+    settings: Settings | None = None,
+    runtime: GraphRuntime | None = None,
+    model: BaseChatModel | None = None,
+    deps: ToolDeps | None = None,
+) -> None:
+    """Run the assembled supervisor on ``dot.thread_id`` and publish its events."""
+    settings = settings or get_settings()
+    owned = runtime is None
+    runtime = runtime or build_graph_runtime(settings)
+    try:
+        agent = build_dot_agent(
+            dot,
+            profile,
+            settings=settings,
+            runtime=runtime,
+            deps=deps,
+            model=model,
+        )
+        config: RunnableConfig = {"configurable": {"thread_id": dot.thread_id}}
+        snapshot = agent.get_state(config)
+        repos = runtime.audit_repositories
+        incoming: Any
+        if batch and batch[0].source == "approval":
+            if len(batch) != 1 or repos is None:
+                raise ValueError("approval resumes require one queue row and repositories")
+            incoming = resume_command(repos, dot, batch[0], snapshot)
+        else:
+            if snapshot.interrupts:
+                raise ValueError("thread is paused for human review")
+            incoming = {"messages": [_inbound_message(message) for message in batch]}
+        # A resumed approval answers the request that paused the thread.
+        tagged = incoming["messages"] if isinstance(incoming, dict) else snapshot.values.get("messages", [])
+        reply_to = latest_channel(tagged)
+        for chunk in agent.stream(incoming, config, stream_mode="updates"):
+            if isinstance(chunk, dict):
+                publish_graph_update(dot.dot_id, chunk, events, reply_to=reply_to)
+        snapshot = agent.get_state(config)
+        if repos is not None:
+            persist_interrupts(repos, dot, profile, snapshot, events, redactor=runtime.redactor)
+        elif snapshot.interrupts:
+            raise ValueError("persisting approvals requires repositories")
+    finally:
+        if owned:
+            runtime.close()
+
+
+def _inbound_message(message: InboxMessage) -> HumanMessage:
+    channel: Json = {"source": message.source, "inbox_id": message.id}
+    reply_ref = message.payload.get("reply_ref")
+    # Only a channel adapter writes reply_ref; it addresses that channel's conversation.
+    if message.source == "slack" and isinstance(reply_ref, dict):
+        channel["reply_ref"] = {key: str(value) for key, value in reply_ref.items() if key in _SLACK_REF_KEYS}
+    tags: Json = {}
+    if message.source == "job_result":
+        # A job result is not a user request: the Guardian reviews what the dot
+        # does with it against the instruction that started the job, and the
+        # reply belongs where that request came from.
+        origin = message.payload.get("origin")
+        origin = origin if isinstance(origin, dict) else {}
+        instruction = origin.get("instruction")
+        tags[GUARDIAN_INSTRUCTION_KEY] = instruction if isinstance(instruction, str) else ""
+        if isinstance(origin.get("channel"), dict):
+            channel = dict(origin["channel"])
+    tags[CHANNEL_KEY] = channel
+    return HumanMessage(content=render_inbound(message), additional_kwargs=tags)
+
+
+def _agent_runner(settings: Settings, runtime: GraphRuntime) -> TurnRunner:
+    def runner(dot: Dot, profile: str, batch: Sequence[InboxMessage], events: EventChannel) -> None:
+        run_agent_turn(dot, profile, batch, events, settings=settings, runtime=runtime)
+
+    return runner
+
+
+def serve(settings: Settings | None = None) -> None:
+    """Poll the inbox until SIGINT or SIGTERM."""
+    settings = settings or get_settings()
+    url = settings.database_url
+    if not url:
+        raise SystemExit("DOT_DATABASE_URL is required for the worker")
+    pool = make_pool(url)
+    try:
+        migrate(pool)
+        repos = PostgresRepositories(pool)
+        stop = _stop_event()
+        store = PostgresJobStore(pool)
+        job_threads = [
+            threading.Thread(
+                target=_serve_jobs, args=(settings, pool, repos, store, stop), name=f"job-runner-{n}", daemon=True
+            )
+            for n in range(settings.job_workers)
+        ]
+        for thread in job_threads:
+            thread.start()
+        runtime = build_graph_runtime(settings)
+        runtime.audit_repositories = repos
+        runtime.jobs = store
+        try:
+            worker = Worker(pool, repos, _events(pool), _agent_runner(settings, runtime))
+            while not stop.is_set():
+                if not worker.run_once():
+                    stop.wait(_IDLE_WAIT_S)
+        finally:
+            stop.set()
+            runtime.close()
+            for thread in job_threads:
+                thread.join()
+    finally:
+        pool.close()
+
+
+def _events(pool: ConnectionPool) -> EventChannel:
+    """Live events, plus outbox rows for replies and cards that belong to Slack."""
+    return DeliveringEventChannel(PgEventChannel(pool), PostgresOutbox(pool), ["slack"])
+
+
+def _serve_jobs(
+    settings: Settings, pool: ConnectionPool, repos: Repositories, store: JobStore, stop: threading.Event
+) -> None:
+    """One job at a time on this thread. The graph runtime is not shared across threads."""
+    runtime = build_graph_runtime(settings)
+    runtime.audit_repositories = repos
+    try:
+        runner = JobRunner(
+            store,
+            repos,
+            _events(pool),
+            lambda dot, job: run_job(dot, job, store, settings=settings, runtime=runtime),
+            lambda dot_id: dot_artifacts(settings, dot_id),
+            runtime.redactor,
+        )
+        while not stop.is_set():
+            if not runner.run_once():
+                stop.wait(_IDLE_WAIT_S)
+    finally:
+        runtime.close()
+
+
+def _stop_event() -> threading.Event:
+    stop = threading.Event()
+
+    def handle(signum: int, frame: object) -> None:
+        del signum, frame
+        stop.set()
+
+    signal.signal(signal.SIGINT, handle)
+    signal.signal(signal.SIGTERM, handle)
+    return stop
+
+
+def main() -> None:
+    serve()
+
+
+if __name__ == "__main__":
+    main()

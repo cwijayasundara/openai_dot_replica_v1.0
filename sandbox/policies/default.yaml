@@ -1,0 +1,12 @@
+version: 1
+filesystem_policy:
+  include_workdir: false
+  read_only: [/usr, /lib, /bin, /etc, /proc, /dev/urandom, /in, /skills]
+  read_write: [/work, /dev/null]
+landlock:
+  compatibility: hard_requirement
+# The gateway takes 'sandbox' or a numeric id; 1000 is the image's runner user.
+process:
+  run_as_user: "1000"
+  run_as_group: "1000"
+network_policies: {}

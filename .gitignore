@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.superpowers/
+.env
+.env.*
+!.env.example
+var/
+web/node_modules/
+web/.next/
+web/next-env.d.ts
+*.tsbuildinfo
+.DS_Store

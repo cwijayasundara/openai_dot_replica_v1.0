@@ -1,0 +1,5 @@
+# MCP servers. Each tool maps to an effect. A tool with no effect is refused at pack load.
+servers:
+  github:
+    # Tool effects are added in task K1. No tools are offered until then.
+    tools: {}

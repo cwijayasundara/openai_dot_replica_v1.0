@@ -1,0 +1,12 @@
+defaults:
+  read: allow
+  draft: allow
+  write: approve
+  external: approve
+  financial: approve
+  credential: block
+tools:
+  send_email: approve
+  delete_*: block
+# Slack or web user ids allowed to approve for a dot created from this pack.
+approvers: []

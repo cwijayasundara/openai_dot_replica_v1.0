@@ -65,11 +65,62 @@ def test_profile_granting_a_blocked_effect_fails(tmp_path: Path) -> None:
         load_pack(root)
 
 
+def _sweep(**values: object) -> dict[str, object]:
+    return {"name": "sweep", "cron": "*/30 7-22 * * 1-5", "profile": "sweep", "prompt": "Sweep.", **values}
+
+
+def test_a_bad_cron_fails(tmp_path: Path) -> None:
+    root = _write_pack(
+        tmp_path / "research-analyst",
+        native=["web_search"],
+        profiles={"sweep": {"effects": ["read"]}},
+        schedules=[_sweep(cron="0 9 * * */2")],
+    )
+    with pytest.raises(PackLoadError, match=r"schedule 'sweep'.*steps are not supported"):
+        load_pack(root)
+
+
+def test_a_sweep_that_could_send_fails(tmp_path: Path) -> None:
+    root = _write_pack(
+        tmp_path / "research-analyst",
+        native=["web_search", "slack_post"],
+        profiles={"sweep": {"tools": ["web_search", "slack_post"]}},
+        schedules=[_sweep()],
+    )
+    with pytest.raises(PackLoadError, match=r"sweep 'sweep' uses profile 'sweep', which grants 'slack_post'"):
+        load_pack(root)
+
+
+def test_a_sweep_whose_subagent_could_send_fails(tmp_path: Path) -> None:
+    # The profile's effect filter does not apply inside a subagent, so the subagent's own tools count.
+    root = _write_pack(
+        tmp_path / "research-analyst",
+        native=["web_search", "send_email"],
+        subagents=[{"name": "mailer", "model": "fast", "tools": ["send_email"], "description": "Mails."}],
+        profiles={"sweep": {"effects": ["read"], "subagents": ["mailer"]}},
+        schedules=[_sweep()],
+    )
+    with pytest.raises(PackLoadError, match=r"which grants 'send_email'"):
+        load_pack(root)
+
+
+def test_a_digest_may_draft(tmp_path: Path) -> None:
+    root = _write_pack(
+        tmp_path / "research-analyst",
+        native=["web_search", "draft_email"],
+        profiles={"digest": {"effects": ["read", "draft"]}},
+        schedules=[{"name": "digest", "kind": "digest", "cron": "45 8 * * 1-5", "profile": "digest", "prompt": "D."}],
+    )
+    assert load_pack(root).pack.schedule("digest").kind == "digest"
+
+
 def _write_pack(
     root: Path,
     *,
     native: list[str],
     profiles: dict[str, object] | None = None,
+    subagents: list[dict[str, object]] | None = None,
+    schedules: list[dict[str, object]] | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     (root / "persona.md").write_text("# Analyst\n\nCalm.\n", encoding="utf-8")
@@ -108,10 +159,10 @@ def _write_pack(
                 "skills": "skills/",
                 "wiki": "wiki/",
                 "tools": {"native": native, "mcp": ["github"]},
-                "subagents": [],
+                "subagents": subagents or [],
                 "profiles": profiles or {"chat": {"tools": "*", "subagents": []}},
                 "policy": "policy.yaml",
-                "schedules": [],
+                "schedules": schedules or [],
             }
         ),
         encoding="utf-8",

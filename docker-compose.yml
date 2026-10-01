@@ -24,6 +24,9 @@ services:
     environment:
       DOT_DATABASE_URL: postgresql://dot:dot@postgres:5432/dot
       DOT_OBJECT_ROOT: /var/dot/objects
+      # Local only: the web UI acts as this one user. GCP uses DOT_WEB_AUTH=iap.
+      DOT_WEB_AUTH: ${DOT_WEB_AUTH:-dev}
+      DOT_WEB_DEV_USER: ${DOT_WEB_DEV_USER:-local}
     volumes:
       - dotobjects:/var/dot/objects
       - /var/run/docker.sock:/var/run/docker.sock
@@ -51,6 +54,22 @@ services:
       postgres:
         condition: service_healthy
 
+  # Local pack schedules. Run exactly one; on GCP, Cloud Scheduler calls the API instead.
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "dot.proactive.scheduler"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DOT_DATABASE_URL: postgresql://dot:dot@postgres:5432/dot
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # Slack Socket Mode and outbox delivery. Needs DOT_SLACK_BOT_TOKEN and DOT_SLACK_APP_TOKEN.
   slack:
     build:
@@ -72,7 +91,7 @@ services:
     build:
       context: ./web
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        DOT_API_URL: http://api:8000
     ports:
       - "3000:3000"
     depends_on:

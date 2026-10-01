@@ -325,6 +325,27 @@ PostgreSQL. Live acceptance in a Slack workspace is pending.
 
 **Acceptance:** Playwright e2e against a scripted API: send a message, see the job, approve an action, see the audit trail. The same thread shows messages that came from Slack.
 
+**Status (2026-10-01):** implemented. The Playwright acceptance test passes
+against the scripted API.
+- **Pages.** Dot list and create; dot home (thread, live SSE, waiting
+  approvals, jobs, findings, recent decisions); audit trail; memory diffs;
+  sandbox activity. `/api/*` is proxied to the API.
+- **Approval cards.** They show the proposed arguments. Edit puts each current
+  value beside an editable field. A decided card shows the before/after of an
+  edit and who decided it.
+- **API.** New read routes for jobs, approvals, findings, memory versions and
+  sandbox activity, plus `/me`, `/dots` and `/packs`. Each needs the dot's
+  owner or a pack approver. Thread messages carry their `source`. New
+  repository queries are covered by the shared contract, in memory and in
+  Postgres.
+- **Identity.** `surfaces/identity.py`: `DOT_WEB_AUTH=off|dev|iap`. `dev` is a
+  fixed user and is refused unless `DOT_ENV=local`. `iap` verifies Google's
+  signed assertion and maps `sub` through `users.web_subject`.
+- **Open.** Create, message, thread and events routes are still
+  unauthenticated, as before. Linking IAP subjects to users is Phase 11.
+  Findings and memory views show empty states until P2 and L4 write rows.
+- **Runbook.** [`web-ui.md`](web-ui.md).
+
 ---
 
 ## Phase 7: Proactivity (3 days)
@@ -338,6 +359,24 @@ PostgreSQL. Live acceptance in a Slack workspace is pending.
 - Per-schedule budgets for model calls and tokens.
 
 **Acceptance:** a scripted sweep writes findings and makes no external call; a test proves the `sweep` profile cannot see `send_email` or `slack_post`; the digest posts once and marks findings as reported.
+
+**Status (2026-10-01):** implemented. The acceptance tests pass with a
+scripted model, in memory, with the repository contract also run in Postgres.
+- **Scheduler.** `proactive/scheduler.py` runs one APScheduler cron job per
+  pack schedule and queues each active dot of the pack. `POST
+  /schedules/{dot}/{name}` verifies Cloud Scheduler's OIDC token. Both go
+  through `trigger`. A pending run absorbs repeat firings, and a slot never
+  runs twice. Crons are read in `DOT_SCHEDULE_TIMEZONE`, with crontab weekday
+  numbers translated, because APScheduler 3 counts from Monday.
+- **Sweeps.** A pack fails to load if a sweep can reach a non-`read` tool.
+  Sweeps run on their own thread with no job tools. `record_finding` and
+  `list_findings` are offered only on scheduled runs.
+- **Digest.** `kind: digest` runs on the dot's thread, only when findings are
+  open. It posts to the bound Slack channel (`via: slack`), and code marks the
+  findings it was shown as `reported`.
+- **Budgets.** `max_model_calls` and `max_tokens` per schedule, shared with
+  subagents. The run ends silently and records a `budget` finding.
+- **Runbook.** [`proactivity.md`](proactivity.md).
 
 ---
 
@@ -435,7 +474,7 @@ Estimated total: about 50 engineering days for one engineer, less with Claude Co
 
 ## 4. Open items (non-blocking)
 
-- Email transport for `send_email`: SMTP relay or Gmail API.
+- ~~Email transport for `send_email`: SMTP relay or Gmail API.~~ Decided 2026-10-01: an SMTP relay. Real transports (Tavily search, DNS-checked fetch, SMTP) are wired by `assembly.default_tool_deps`; see [`transports.md`](transports.md).
 - Whether sweeps should use `glm-5p3` instead of Flash for harder domains; decide from E2 data.
 - Whether to add GKE Agent Sandbox before or after v1 GA.
 - Web auth provider: IAP or Identity Platform.

@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from dot.tools.native.deps import ToolDeps
 from dot.tools.native.envelope import envelope
+from dot.tools.native.tavily import SearchError
 from dot.tools.results import fail, ok
 
 
@@ -18,7 +19,10 @@ def build_web_search(deps: ToolDeps) -> BaseTool:
             return fail("query is empty")
         if deps.search is None:
             return fail("search is not configured")
-        hits = deps.search.search(query.strip(), limit=5)
+        try:
+            hits = deps.search.search(query.strip(), limit=5)
+        except SearchError as exc:
+            return fail(str(exc))
         results = [
             {"title": hit.title, "url": hit.url, "snippet": envelope(hit.snippet, source=hit.url)} for hit in hits[:5]
         ]

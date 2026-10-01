@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import httpx
@@ -16,11 +18,13 @@ MAX_BYTES = 1_000_000
 _TIMEOUT_S = 15.0
 
 
-def public_http_url(url: str) -> str:
-    """Accept an http(s) URL whose literal address is a public host.
+def public_http_url(url: str, resolve: Resolver | None = None) -> str:
+    """Accept an http(s) URL whose host is public.
 
-    Hostnames are not resolved here, so a name that points at a private address
-    is not caught. Redirects are not followed by the fetcher.
+    A hostname is resolved, and every address it resolves to must be public.
+    This blocks names such as the cloud metadata server. A name that changes
+    its answer between this check and the request (DNS rebinding) is not
+    caught; redirects are not followed.
     """
     parsed = urlsplit(url.strip())
     if parsed.scheme not in {"http", "https"}:
@@ -39,16 +43,31 @@ def public_http_url(url: str) -> str:
         address = None
     if address is not None and not address.is_global:
         raise ValueError("that host is not fetchable")
+    if address is None:
+        try:
+            resolved = (resolve or _resolve)(lowered)
+        except OSError:
+            raise ValueError("that host could not be resolved") from None
+        if not resolved or any(not ipaddress.ip_address(item).is_global for item in resolved):
+            raise ValueError("that host is not fetchable")
     return url.strip()
 
 
+Resolver = Callable[[str], list[str]]
+
+
+def _resolve(host: str) -> list[str]:
+    return sorted({str(info[4][0]).split("%")[0] for info in socket.getaddrinfo(host, None)})
+
+
 class HttpxFetcher:
-    def __init__(self, client: httpx.Client | None = None) -> None:
+    def __init__(self, client: httpx.Client | None = None, resolve: Resolver | None = None) -> None:
         self._client = client
         self._owned = client is None
+        self._resolve = resolve
 
     def fetch(self, url: str) -> FetchedPage:
-        checked = public_http_url(url)
+        checked = public_http_url(url, self._resolve)
         client = self._client or httpx.Client(timeout=_TIMEOUT_S, follow_redirects=False)
         try:
             response = client.get(checked)

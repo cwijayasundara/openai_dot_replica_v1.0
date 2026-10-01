@@ -106,13 +106,12 @@ In a DM with the app:
    - the dot confirms in the same thread;
    - the audit log shows the job, the Guardian verdicts and the approval.
 
-**Expected with today's worker.** No real search, fetch or email clients are
-wired yet; the native tools only have their seams.
-- The job's brief says search is not configured.
-- After approval, `send_email` reports that email is not configured.
+**Expected results.** Search and email need `DOT_TAVILY_API_KEY` and the SMTP
+settings ([`transports.md`](transports.md)).
+- Without them, the brief says search is not configured.
+- Without them, after approval `send_email` reports that email is not configured.
 
-The C1 path is still fully exercised: message, job, result and approval in one
-thread, with a decided card. Real transports are separate work.
+Either way, the C1 path is fully exercised.
 
 ## Tests
 

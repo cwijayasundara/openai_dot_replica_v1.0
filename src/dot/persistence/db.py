@@ -6,7 +6,7 @@ contract tests as Postgres. The audit log rejects updates in both.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -199,6 +199,10 @@ class Repositories(Protocol):
     def get_approval(self, approval_id: str) -> Approval: ...
     def update_approval(self, approval: Approval) -> None: ...
     def list_approvals(self, dot_id: str, run_ref: str) -> list[Approval]: ...
+    def list_dot_approvals(self, dot_id: str, status: str | None = None) -> list[Approval]:
+        """Pending cards first, then the most recently decided, then closed undecided ones (cancelled)."""
+        ...
+
     def pause_for_approvals(
         self, dot: Dot, approvals: list[Approval], audit: dict[str, AuditEvent] | None = None
     ) -> list[Approval]: ...
@@ -227,13 +231,22 @@ class Repositories(Protocol):
     def append_audit(self, event: AuditEvent) -> AuditEvent: ...
     def get_audit(self, event_id: int) -> AuditEvent: ...
     def list_audit(
-        self, dot_id: str, *, after_id: int = 0, limit: int = 100, turn_id: str | None = None
+        self,
+        dot_id: str,
+        *,
+        after_id: int = 0,
+        limit: int = 100,
+        turn_id: str | None = None,
+        actors: Sequence[str] | None = None,
     ) -> list[AuditEvent]: ...
     def update_audit(self, event: AuditEvent) -> None: ...
 
     def insert_finding(self, finding: Finding) -> Finding: ...
     def get_finding(self, finding_id: int) -> Finding: ...
     def update_finding(self, finding: Finding) -> None: ...
+    def list_findings(self, dot_id: str, status: str | None = None) -> list[Finding]:
+        """Newest first."""
+        ...
 
     def insert_episode(self, episode: Episode) -> Episode: ...
     def get_episode(self, episode_id: int) -> Episode: ...
@@ -242,6 +255,9 @@ class Repositories(Protocol):
     def insert_memory_version(self, version: MemoryVersion) -> MemoryVersion: ...
     def get_memory_version(self, version_id: int) -> MemoryVersion: ...
     def update_memory_version(self, version: MemoryVersion) -> None: ...
+    def list_memory_versions(self, dot_id: str) -> list[MemoryVersion]:
+        """Newest first."""
+        ...
 
     def bind_channel(self, binding: ChannelBinding) -> None: ...
     def get_channel(self, dot_id: str, channel: str) -> ChannelBinding: ...
@@ -251,7 +267,15 @@ class Repositories(Protocol):
         ...
 
     def find_user_by_slack(self, slack_user_id: str) -> User: ...
+    def find_user_by_web_subject(self, web_subject: str) -> User: ...
     def list_dots_for_owner(self, owner_user_id: str) -> list[Dot]: ...
+    def list_active_dots(self, pack_name: str) -> list[Dot]: ...
+    def insert_schedule_run(self, message: InboxMessage) -> InboxMessage | None:
+        """Queue a scheduled run unless one for that schedule is pending or its slot already ran.
+
+        ``payload`` must hold ``schedule`` and ``slot``. None means nothing was queued.
+        """
+        ...
 
 
 def migrate(pool: ConnectionPool) -> None:
@@ -393,6 +417,12 @@ class MemoryRepositories:
     def list_approvals(self, dot_id: str, run_ref: str) -> list[Approval]:
         return [a for a in self.approvals.values() if a.dot_id == dot_id and a.run_ref == run_ref]
 
+    def list_dot_approvals(self, dot_id: str, status: str | None = None) -> list[Approval]:
+        self.get_dot(dot_id)
+        with self._approval_lock:
+            rows = [a for a in self.approvals.values() if a.dot_id == dot_id and status in (None, a.status)]
+        return sorted(rows, key=_approval_order)
+
     def pause_for_approvals(
         self, dot: Dot, approvals: list[Approval], audit: dict[str, AuditEvent] | None = None
     ) -> list[Approval]:
@@ -478,7 +508,13 @@ class MemoryRepositories:
         raise AppendOnly("audit_log is append-only")
 
     def list_audit(
-        self, dot_id: str, *, after_id: int = 0, limit: int = 100, turn_id: str | None = None
+        self,
+        dot_id: str,
+        *,
+        after_id: int = 0,
+        limit: int = 100,
+        turn_id: str | None = None,
+        actors: Sequence[str] | None = None,
     ) -> list[AuditEvent]:
         self.get_dot(dot_id)
         with self._approval_lock:
@@ -491,6 +527,7 @@ class MemoryRepositories:
                     if a.dot_id == dot_id
                     and a.id > after_id
                     and (turn_id is None or (a.detail or {}).get("turn_id") == turn_id)
+                    and (actors is None or a.actor in actors)
                 ),
                 key=lambda a: a.id,
             )[:limit]
@@ -520,6 +557,11 @@ class MemoryRepositories:
     def update_finding(self, finding: Finding) -> None:
         self.get_finding(finding.id)
         self.findings[finding.id] = finding
+
+    def list_findings(self, dot_id: str, status: str | None = None) -> list[Finding]:
+        self.get_dot(dot_id)
+        rows = [f for f in self.findings.values() if f.dot_id == dot_id and status in (None, f.status)]
+        return sorted(rows, key=lambda f: (f.created_at, f.id), reverse=True)
 
     def insert_episode(self, episode: Episode) -> Episode:
         self.get_dot(episode.dot_id)
@@ -568,6 +610,11 @@ class MemoryRepositories:
         self.get_memory_version(version.id)
         self.memory_versions[version.id] = version
 
+    def list_memory_versions(self, dot_id: str) -> list[MemoryVersion]:
+        self.get_dot(dot_id)
+        rows = [v for v in self.memory_versions.values() if v.dot_id == dot_id]
+        return sorted(rows, key=lambda v: (v.at, v.id), reverse=True)
+
     def bind_channel(self, binding: ChannelBinding) -> None:
         self.get_dot(binding.dot_id)
         self.channels[(binding.dot_id, binding.channel)] = binding
@@ -594,11 +641,45 @@ class MemoryRepositories:
                 return user
         raise NotFound("users", slack_user_id)
 
+    def find_user_by_web_subject(self, web_subject: str) -> User:
+        for user in self.users.values():
+            if user.web_subject == web_subject:
+                return user
+        raise NotFound("users", web_subject)
+
     def list_dots_for_owner(self, owner_user_id: str) -> list[Dot]:
         return sorted(
             (dot for dot in self.dots.values() if dot.owner_user_id == owner_user_id),
             key=lambda dot: (dot.created_at, dot.dot_id),
         )
+
+    def list_active_dots(self, pack_name: str) -> list[Dot]:
+        return sorted(
+            (dot for dot in self.dots.values() if dot.pack_name == pack_name and dot.status == "active"),
+            key=lambda dot: (dot.created_at, dot.dot_id),
+        )
+
+    def insert_schedule_run(self, message: InboxMessage) -> InboxMessage | None:
+        name, slot = _schedule_key(message)
+        with self._approval_lock:
+            for row in self.inbox.values():
+                if row.dot_id != message.dot_id or row.source != "schedule" or row.payload.get("schedule") != name:
+                    continue
+                if row.done_at is None or row.payload.get("slot") == slot:
+                    return None
+            return self.insert_inbox(message)
+
+
+def _schedule_key(message: InboxMessage) -> tuple[str, str]:
+    name, slot = message.payload.get("schedule"), message.payload.get("slot")
+    if message.source != "schedule" or not isinstance(name, str) or not isinstance(slot, str):
+        raise ValueError("a schedule run needs source 'schedule' and a payload with schedule and slot")
+    return name, slot
+
+
+def _approval_order(card: Approval) -> tuple[bool, float, str]:
+    decided = card.decided_at.timestamp() if card.decided_at is not None else 0.0
+    return (card.status != "pending", -decided, card.approval_id)
 
 
 def _dt(value: Any) -> datetime:
@@ -687,6 +768,16 @@ class PostgresRepositories:
         with self.pool.connection() as conn:
             ids = conn.execute(
                 "SELECT approval_id FROM approvals WHERE dot_id = %s AND run_ref = %s", (dot_id, run_ref)
+            ).fetchall()
+        return [self.get_approval(str(row[0])) for row in ids]
+
+    def list_dot_approvals(self, dot_id: str, status: str | None = None) -> list[Approval]:
+        self.get_dot(dot_id)
+        with self.pool.connection() as conn:
+            ids = conn.execute(
+                "SELECT approval_id FROM approvals WHERE dot_id = %s AND (%s::text IS NULL OR status = %s) "
+                "ORDER BY status <> 'pending', decided_at DESC NULLS LAST, approval_id",
+                (dot_id, status, status),
             ).fetchall()
         return [self.get_approval(str(row[0])) for row in ids]
 
@@ -999,14 +1090,22 @@ class PostgresRepositories:
         )
 
     def list_audit(
-        self, dot_id: str, *, after_id: int = 0, limit: int = 100, turn_id: str | None = None
+        self,
+        dot_id: str,
+        *,
+        after_id: int = 0,
+        limit: int = 100,
+        turn_id: str | None = None,
+        actors: Sequence[str] | None = None,
     ) -> list[AuditEvent]:
         self.get_dot(dot_id)
+        names = list(actors) if actors is not None else None
         with self.pool.connection() as conn:
             ids = conn.execute(
                 "SELECT id FROM audit_log WHERE dot_id=%s AND id>%s "
-                "AND (%s::text IS NULL OR detail->>'turn_id'=%s) ORDER BY id LIMIT %s",
-                (dot_id, after_id, turn_id, turn_id, limit),
+                "AND (%s::text IS NULL OR detail->>'turn_id'=%s) "
+                "AND (%s::text[] IS NULL OR actor = ANY(%s::text[])) ORDER BY id LIMIT %s",
+                (dot_id, after_id, turn_id, turn_id, names, names, limit),
             ).fetchall()
         return [self.get_audit(int(row[0])) for row in ids]
 
@@ -1048,6 +1147,16 @@ class PostgresRepositories:
             status=row["status"],
             created_at=_dt(row["created_at"]),
         )
+
+    def list_findings(self, dot_id: str, status: str | None = None) -> list[Finding]:
+        self.get_dot(dot_id)
+        with self.pool.connection() as conn:
+            ids = conn.execute(
+                "SELECT id FROM findings WHERE dot_id = %s AND (%s::text IS NULL OR status = %s) "
+                "ORDER BY created_at DESC, id DESC",
+                (dot_id, status, status),
+            ).fetchall()
+        return [self.get_finding(int(row[0])) for row in ids]
 
     def update_finding(self, finding: Finding) -> None:
         self._must(
@@ -1139,6 +1248,14 @@ class PostgresRepositories:
             str(version.id),
         )
 
+    def list_memory_versions(self, dot_id: str) -> list[MemoryVersion]:
+        self.get_dot(dot_id)
+        with self.pool.connection() as conn:
+            ids = conn.execute(
+                "SELECT id FROM memory_versions WHERE dot_id = %s ORDER BY at DESC, id DESC", (dot_id,)
+            ).fetchall()
+        return [self.get_memory_version(int(row[0])) for row in ids]
+
     def bind_channel(self, binding: ChannelBinding) -> None:
         with self.pool.connection() as conn:
             conn.execute(
@@ -1181,12 +1298,45 @@ class PostgresRepositories:
             web_subject=row["web_subject"],
         )
 
+    def find_user_by_web_subject(self, web_subject: str) -> User:
+        row = self._one("SELECT user_id FROM users WHERE web_subject = %s", (web_subject,), "users", web_subject)
+        return self.get_user(str(row["user_id"]))
+
     def list_dots_for_owner(self, owner_user_id: str) -> list[Dot]:
         with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             ids = cur.execute(
                 "SELECT dot_id FROM dots WHERE owner_user_id = %s ORDER BY created_at, dot_id", (owner_user_id,)
             ).fetchall()
         return [self.get_dot(str(row["dot_id"])) for row in ids]
+
+    def list_active_dots(self, pack_name: str) -> list[Dot]:
+        with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            ids = cur.execute(
+                "SELECT dot_id FROM dots WHERE pack_name = %s AND status = 'active' ORDER BY created_at, dot_id",
+                (pack_name,),
+            ).fetchall()
+        return [self.get_dot(str(row["dot_id"])) for row in ids]
+
+    def insert_schedule_run(self, message: InboxMessage) -> InboxMessage | None:
+        name, slot = _schedule_key(message)
+        with self.pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            # Serialises two firings of one schedule, such as a Cloud Scheduler retry.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"schedule:{message.dot_id}:{name}",))
+            existing = cur.execute(
+                "SELECT 1 FROM inbox WHERE dot_id = %s AND source = 'schedule' AND payload->>'schedule' = %s"
+                " AND (done_at IS NULL OR payload->>'slot' = %s) LIMIT 1",
+                (message.dot_id, name, slot),
+            ).fetchone()
+            if existing is not None:
+                return None
+            row = cur.execute(
+                "INSERT INTO inbox (dot_id, source, payload, profile, created_at) VALUES (%s, 'schedule', %s, %s, %s)"
+                " RETURNING id",
+                (message.dot_id, Jsonb(message.payload), message.profile, message.created_at),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("insert returned no row")
+        return self.get_inbox(int(row["id"]))
 
     def _one(self, sql: str, params: tuple[Any, ...], table: str, key: str) -> dict[str, Any]:
         with self.pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:

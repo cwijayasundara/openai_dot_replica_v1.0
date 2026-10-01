@@ -7,7 +7,7 @@ import json
 import queue
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import psycopg
@@ -19,13 +19,28 @@ from sse_starlette.sse import EventSourceResponse
 
 from dot.assembly import GraphRuntime, build_graph_runtime
 from dot.config import Settings, get_settings
-from dot.packs.loader import PackLoadError
-from dot.persistence.db import ApprovalConflict, NotFound, PostgresRepositories, Repositories, open_repositories
+from dot.jobs.store import JobStore, MemoryJobStore, PostgresJobStore
+from dot.packs.loader import REPO_ROOT, PackLoadError, load_pack
+from dot.persistence.db import (
+    ApprovalConflict,
+    Dot,
+    MemoryRepositories,
+    NotFound,
+    PostgresRepositories,
+    Repositories,
+    open_repositories,
+)
+from dot.proactive.scheduler import trigger
 from dot.runtime.turns import EventKind, InMemoryEventChannel, PgEventChannel, TurnEvent
 from dot.safety.approvals import ReviewDecision, approvers, decide
 from dot.surfaces.dots import create_dot, dot_view, post_message, read_thread
+from dot.surfaces.identity import IapVerifier, SchedulerVerifier, install_identity, principal
+from dot.surfaces.views import approval_view, audit_view, finding_view, job_view, memory_version_view
 
-_SSE_PING_S = 0
+# Keepalive comments stop proxies from closing an idle stream; EventSource ignores them.
+_SSE_PING_S = 15
+# Cloud Scheduler names the slot it fired for, so a retried attempt keeps its slot.
+_SCHEDULE_TIME_HEADER = "x-cloudscheduler-scheduletime"
 
 
 class CreateDotBody(BaseModel):
@@ -50,6 +65,7 @@ class Surface:
         repos: Repositories,
         runtime: GraphRuntime,
         events: InMemoryEventChannel | PgEventChannel,
+        jobs: JobStore | None,
         *,
         model: BaseChatModel | None = None,
         owns_repos: bool = False,
@@ -59,6 +75,7 @@ class Surface:
         self.repos = repos
         self.runtime = runtime
         self.events = events
+        self.jobs = jobs
         self.model = model
         self.owns_repos = owns_repos
         self.owns_runtime = owns_runtime
@@ -77,6 +94,8 @@ def create_app(
     runtime: GraphRuntime | None = None,
     events: InMemoryEventChannel | PgEventChannel | None = None,
     model: BaseChatModel | None = None,
+    iap_verifier: IapVerifier | None = None,
+    scheduler_verifier: SchedulerVerifier | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     owns_repos = repos is None
@@ -94,6 +113,7 @@ def create_app(
         repos,
         runtime,
         events,
+        runtime.jobs or _job_store(repos),
         model=model,
         owns_repos=owns_repos,
         owns_runtime=owns_runtime,
@@ -109,6 +129,19 @@ def create_app(
 
     app = FastAPI(title="open dot", lifespan=lifespan)
     app.state.surface = surface
+    install_identity(app, settings, repos, iap_verifier)
+    if scheduler_verifier is None and settings.scheduler_audience and settings.scheduler_invoker:
+        scheduler_verifier = SchedulerVerifier(settings.scheduler_audience, settings.scheduler_invoker)
+
+    def viewer(request: Request, dot_id: str) -> Dot:
+        """The dot, when the verified caller is its owner or a pack approver."""
+        user_id = principal(request)
+        if user_id is None:
+            raise HTTPException(401, "authenticated identity required")
+        dot = surface.repos.get_dot(dot_id)
+        if user_id != dot.owner_user_id and user_id not in approvers(dot.pack_name):
+            raise HTTPException(403, "access to this dot is not permitted")
+        return dot
 
     @app.exception_handler(NotFound)
     def not_found(_request: Request, exc: NotFound) -> JSONResponse:
@@ -129,11 +162,29 @@ def create_app(
     if settings.slack_mode == "http" and settings.slack_bot_token and settings.slack_signing_secret:
         _mount_slack(app, settings, surface)
 
+    @app.get("/me")
+    def me(request: Request) -> dict[str, Any]:
+        user_id = principal(request)
+        if user_id is None:
+            raise HTTPException(401, "authenticated identity required")
+        return {"user_id": user_id}
+
+    @app.get("/packs")
+    def packs() -> dict[str, Any]:
+        return {"packs": _packs()}
+
+    @app.get("/dots")
+    def my_dots(request: Request) -> dict[str, Any]:
+        user_id = principal(request)
+        if user_id is None:
+            raise HTTPException(401, "authenticated identity required")
+        return {"dots": [dot_view(dot) for dot in surface.repos.list_dots_for_owner(user_id)]}
+
     @app.post("/approvals/{approval_id}", status_code=202)
     def approval_decision(approval_id: str, body: ReviewDecision, request: Request) -> dict[str, Any]:
         # Only trusted authentication middleware may set this principal.
-        user_id = getattr(request.state, "user_id", None)
-        if not isinstance(user_id, str) or not user_id:
+        user_id = principal(request)
+        if user_id is None:
             raise HTTPException(401, "authenticated identity required")
         try:
             card = decide(surface.repos, approval_id, user_id, body, redactor=surface.runtime.redactor)
@@ -174,18 +225,69 @@ def create_app(
         limit: int = Query(100, ge=1, le=1000),
         turn_id: str | None = None,
     ) -> dict[str, Any]:
-        user_id = getattr(request.state, "user_id", None)
-        if not isinstance(user_id, str) or not user_id:
-            raise HTTPException(401, "authenticated identity required")
-        dot = surface.repos.get_dot(dot_id)
-        if user_id != dot.owner_user_id and user_id not in approvers(dot.pack_name):
-            raise HTTPException(403, "audit access is not permitted")
+        viewer(request, dot_id)
         rows = surface.repos.list_audit(dot_id, after_id=after_id, limit=limit, turn_id=turn_id)
         return {
             "dot_id": dot_id,
-            "events": [surface.runtime.redactor.content(asdict(row)) for row in rows],
+            "events": [audit_view(row, surface.runtime.redactor) for row in rows],
             "next_after_id": rows[-1].id if len(rows) == limit else None,
         }
+
+    @app.get("/dots/{dot_id}/sandbox")
+    def sandbox_activity(
+        dot_id: str,
+        request: Request,
+        after_id: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=1000),
+    ) -> dict[str, Any]:
+        """Audit rows from the pack's sandboxed subagents."""
+        dot = viewer(request, dot_id)
+        actors = [spec.name for spec in load_pack(REPO_ROOT / "packs" / dot.pack_name).pack.subagents if spec.sandbox]
+        rows = surface.repos.list_audit(dot_id, after_id=after_id, limit=limit, actors=actors)
+        return {
+            "dot_id": dot_id,
+            "actors": actors,
+            "events": [audit_view(row, surface.runtime.redactor) for row in rows],
+            "next_after_id": rows[-1].id if len(rows) == limit else None,
+        }
+
+    @app.get("/dots/{dot_id}/jobs")
+    def jobs(dot_id: str, request: Request) -> dict[str, Any]:
+        viewer(request, dot_id)
+        if surface.jobs is None:
+            return {"dot_id": dot_id, "jobs": []}
+        rows = sorted(surface.jobs.list_jobs(dot_id), key=lambda job: (job.created_at, job.job_id), reverse=True)
+        return {"dot_id": dot_id, "jobs": [job_view(job, surface.runtime.redactor) for job in rows]}
+
+    @app.get("/dots/{dot_id}/approvals")
+    def approval_cards(dot_id: str, request: Request, status: str | None = None) -> dict[str, Any]:
+        viewer(request, dot_id)
+        rows = surface.repos.list_dot_approvals(dot_id, status)
+        return {"dot_id": dot_id, "approvals": [approval_view(card, surface.runtime.redactor) for card in rows]}
+
+    @app.get("/dots/{dot_id}/findings")
+    def findings(dot_id: str, request: Request, status: str | None = None) -> dict[str, Any]:
+        viewer(request, dot_id)
+        rows = surface.repos.list_findings(dot_id, status)
+        return {"dot_id": dot_id, "findings": [finding_view(row, surface.runtime.redactor) for row in rows]}
+
+    @app.get("/dots/{dot_id}/memory")
+    def memory_versions(dot_id: str, request: Request) -> dict[str, Any]:
+        viewer(request, dot_id)
+        rows = surface.repos.list_memory_versions(dot_id)
+        return {"dot_id": dot_id, "versions": [memory_version_view(row, surface.runtime.redactor) for row in rows]}
+
+    @app.post("/schedules/{dot_id}/{name}", status_code=202)
+    def schedule_run(dot_id: str, name: str, request: Request) -> dict[str, Any]:
+        """Cloud Scheduler's trigger. The body is ignored: profile and prompt come from the pack."""
+        if scheduler_verifier is None:
+            raise HTTPException(503, "the scheduler webhook is not configured")
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not token or not scheduler_verifier.allows(token):
+            raise HTTPException(401, "a valid scheduler token is required")
+        dot = surface.repos.get_dot(dot_id)
+        stored = trigger(surface.repos, dot, name, _schedule_time(request.headers.get(_SCHEDULE_TIME_HEADER)))
+        return {"dot_id": dot_id, "schedule": name, "queued": stored is not None, "inbox_id": stored and stored.id}
 
     @app.get("/dots/{dot_id}/events")
     def events_route(dot_id: str, request: Request) -> EventSourceResponse:
@@ -193,6 +295,38 @@ def create_app(
         return EventSourceResponse(_events(surface, dot_id, request), ping=_SSE_PING_S)
 
     return app
+
+
+def _schedule_time(header: str | None) -> datetime:
+    if header:
+        try:
+            at = datetime.fromisoformat(header)
+        except ValueError:
+            pass
+        else:
+            if at.tzinfo is not None:
+                return at
+    return datetime.now(UTC)
+
+
+def _job_store(repos: Repositories) -> JobStore | None:
+    if isinstance(repos, PostgresRepositories):
+        return PostgresJobStore(repos.pool)
+    if isinstance(repos, MemoryRepositories):
+        return MemoryJobStore(repos)
+    return None
+
+
+def _packs() -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for pack_dir in sorted((REPO_ROOT / "packs").iterdir()):
+        if not (pack_dir / "pack.yaml").is_file():
+            continue
+        pack = load_pack(pack_dir).pack
+        found.append(
+            {"name": pack.name, "profiles": sorted(pack.profiles), "subagents": [s.name for s in pack.subagents]}
+        )
+    return found
 
 
 def _events(surface: Surface, dot_id: str, request: Request) -> AsyncIterator[dict[str, str]]:

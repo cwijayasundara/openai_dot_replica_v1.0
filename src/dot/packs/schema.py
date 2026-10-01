@@ -82,12 +82,22 @@ class Profile(BaseModel):
 
 
 class Schedule(BaseModel):
+    """A scheduled entry point. See design section 7.
+
+    A ``sweep`` runs on its own thread, may only read, and records findings.
+    A ``digest`` runs on the dot's thread, summarises open findings and posts
+    to the dot's default channel. Budgets left unset take the deployment's.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    name: str
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     cron: str
     profile: str
     prompt: str
+    kind: Literal["sweep", "digest"] = "sweep"
+    max_model_calls: int | None = Field(default=None, ge=1)
+    max_tokens: int | None = Field(default=None, ge=1)
 
 
 class Pack(BaseModel):
@@ -103,6 +113,12 @@ class Pack(BaseModel):
     profiles: dict[str, Profile]
     policy: str
     schedules: list[Schedule] = Field(default_factory=list)
+
+    def schedule(self, name: str) -> Schedule:
+        for schedule in self.schedules:
+            if schedule.name == name:
+                return schedule
+        raise KeyError(name)
 
 
 class McpServer(BaseModel):

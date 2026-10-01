@@ -8,6 +8,7 @@ into the LangGraph store for a new dot, in the shape ``StoreBackend`` reads.
 from __future__ import annotations
 
 import re
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +17,12 @@ from deepagents.backends.utils import create_file_data
 from langgraph.store.base import BaseStore
 from pydantic import ValidationError
 
+from dot.proactive.cron import cron_trigger
 from dot.safety.policy import resolve_decision
 from dot.tools.effects import Effect
 from dot.tools.registry import ToolRegistry, builtin_registry
 
-from .schema import Decision, LoadedPack, McpConfig, Pack, Policy, Profile
+from .schema import Decision, LoadedPack, McpConfig, Pack, Policy, Profile, SubagentSpec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MCP = REPO_ROOT / "config" / "mcp.yaml"
@@ -88,6 +90,7 @@ def load_pack(
         mcp_tools = _merge_mcp(pack, mcp, reg, errors)
     _check_tool_refs(pack, reg, errors)
     _check_profiles(pack, policy, reg, mcp_tools, errors)
+    _check_schedules(pack, reg, mcp_tools, errors)
 
     if errors or policy is None:
         raise PackLoadError(errors)
@@ -211,6 +214,29 @@ def _check_profiles(
                 errors.append(f"profile {profile_name!r} grants {tool_name!r}, which policy blocks")
 
 
+def _check_schedules(pack: Pack, registry: ToolRegistry, mcp_tools: set[str], errors: list[str]) -> None:
+    """Each cron parses, names are unique, and a sweep's profile reaches only ``read`` tools."""
+    seen: set[str] = set()
+    for schedule in pack.schedules:
+        if schedule.name in seen:
+            errors.append(f"duplicate schedule {schedule.name!r}")
+        seen.add(schedule.name)
+        try:
+            cron_trigger(schedule.cron, UTC)
+        except ValueError as exc:
+            errors.append(f"schedule {schedule.name!r}: {exc}")
+        profile = pack.profiles.get(schedule.profile)
+        if schedule.kind != "sweep" or profile is None:
+            continue
+        # A subagent runs with its own tool list, not the profile's effect filter.
+        reachable = set(_granted_tools(pack, profile, registry, mcp_tools))
+        for subagent in _profile_subagents(pack, profile):
+            reachable.update(name for name in subagent.tools if name in registry)
+        for tool_name in sorted(reachable):
+            if registry.effect(tool_name) is not Effect.read:
+                errors.append(f"sweep {schedule.name!r} uses profile {schedule.profile!r}, which grants {tool_name!r}")
+
+
 def _granted_tools(pack: Pack, profile: Profile, registry: ToolRegistry, mcp_tools: set[str]) -> list[str]:
     names: set[str] = set()
     if profile.tools == "*":
@@ -218,19 +244,22 @@ def _granted_tools(pack: Pack, profile: Profile, registry: ToolRegistry, mcp_too
         names.update(mcp_tools)
     elif isinstance(profile.tools, list):
         names.update(profile.tools)
-    subagents = pack.subagents
-    if isinstance(profile.subagents, list):
-        wanted = set(profile.subagents)
-        subagents = [subagent for subagent in pack.subagents if subagent.name in wanted]
-    elif profile.subagents is None:
-        subagents = []
-    for subagent in subagents:
+    for subagent in _profile_subagents(pack, profile):
         names.update(subagent.tools)
     tagged = [name for name in names if name in registry and registry.effect(name) is not None]
     if profile.effects:
         allowed = set(profile.effects)
         tagged = [name for name in tagged if registry.effect(name) in allowed]
     return sorted(tagged)
+
+
+def _profile_subagents(pack: Pack, profile: Profile) -> list[SubagentSpec]:
+    if isinstance(profile.subagents, list):
+        wanted = set(profile.subagents)
+        return [subagent for subagent in pack.subagents if subagent.name in wanted]
+    if profile.subagents is None:
+        return []
+    return list(pack.subagents)
 
 
 def _decision(policy: Policy, tool_name: str, effect: Effect) -> Decision:

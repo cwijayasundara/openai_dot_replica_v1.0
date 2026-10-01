@@ -23,6 +23,8 @@ from dot.jobs.runner import JobRunner, run_job
 from dot.jobs.store import JobStore, PostgresJobStore
 from dot.middleware.guardian import GUARDIAN_INSTRUCTION_KEY
 from dot.persistence.db import Dot, InboxMessage, Json, PostgresRepositories, Repositories, make_pool, migrate
+from dot.proactive import runs as scheduled_runs
+from dot.proactive.runs import ScheduledRun
 from dot.runtime.locks import DotLocks
 from dot.runtime.router import CHANNEL_KEY, latest_channel, message_detail, render_inbound
 from dot.runtime.turns import EventChannel, PgEventChannel, TurnEvent, publish_graph_update
@@ -32,6 +34,8 @@ from dot.tools.native.deps import ToolDeps
 # How long to sleep when the inbox has nothing this worker can claim.
 _IDLE_WAIT_S = 0.2
 _SLACK_REF_KEYS = frozenset({"channel", "thread_ts"})
+# Rows that run as a turn of their own: a resume, and a schedule with its own budget.
+_ALONE = ("approval", "schedule")
 
 TurnRunner = Callable[[Dot, str, Sequence[InboxMessage], EventChannel], None]
 
@@ -111,7 +115,7 @@ class Worker:
             ids: list[int] = []
             profile: str | None = None
             for row in rows:
-                if ids and (row["source"] == "approval" or rows[0]["source"] == "approval"):
+                if ids and (row["source"] in _ALONE or rows[0]["source"] in _ALONE):
                     break
                 if profile is None:
                     profile = str(row["profile"])
@@ -153,11 +157,23 @@ def run_agent_turn(
     model: BaseChatModel | None = None,
     deps: ToolDeps | None = None,
 ) -> None:
-    """Run the assembled supervisor on ``dot.thread_id`` and publish its events."""
+    """Run the assembled supervisor on ``dot.thread_id`` and publish its events.
+
+    A schedule row runs as ``proactive.runs`` decides: a sweep on its own
+    thread, a digest only when findings are open.
+    """
     settings = settings or get_settings()
     owned = runtime is None
     runtime = runtime or build_graph_runtime(settings)
+    scheduled: ScheduledRun | None = None
     try:
+        repos = runtime.audit_repositories
+        if batch and batch[0].source == "schedule":
+            if len(batch) != 1 or repos is None:
+                raise ValueError("a scheduled run needs one queue row and repositories")
+            scheduled = scheduled_runs.prepare(repos, dot, batch[0], settings)
+            if scheduled is None:
+                return
         agent = build_dot_agent(
             dot,
             profile,
@@ -165,12 +181,17 @@ def run_agent_turn(
             runtime=runtime,
             deps=deps,
             model=model,
+            scheduled=scheduled,
         )
-        config: RunnableConfig = {"configurable": {"thread_id": dot.thread_id}}
+        thread_id = scheduled.thread_id if scheduled is not None else dot.thread_id
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
         snapshot = agent.get_state(config)
-        repos = runtime.audit_repositories
         incoming: Any
-        if batch and batch[0].source == "approval":
+        if scheduled is not None and repos is not None:
+            if snapshot.interrupts:
+                raise ValueError("thread is paused for human review")
+            incoming = {"messages": [scheduled_runs.request(repos, dot, scheduled, batch[0])]}
+        elif batch and batch[0].source == "approval":
             if len(batch) != 1 or repos is None:
                 raise ValueError("approval resumes require one queue row and repositories")
             incoming = resume_command(repos, dot, batch[0], snapshot)
@@ -181,17 +202,28 @@ def run_agent_turn(
         # A resumed approval answers the request that paused the thread.
         tagged = incoming["messages"] if isinstance(incoming, dict) else snapshot.values.get("messages", [])
         reply_to = latest_channel(tagged)
+        if scheduled is not None and scheduled.schedule.kind == "sweep":
+            events = scheduled_runs.Silent(events)
         for chunk in agent.stream(incoming, config, stream_mode="updates"):
             if isinstance(chunk, dict):
                 publish_graph_update(dot.dot_id, chunk, events, reply_to=reply_to)
         snapshot = agent.get_state(config)
+        if scheduled is not None and repos is not None:
+            if snapshot.interrupts and scheduled.thread_id != dot.thread_id:
+                raise ValueError(f"sweep {scheduled.schedule.name!r} cannot wait for approval")
+            scheduled_runs.finish(repos, dot, scheduled, snapshot.values.get("messages", []))
         if repos is not None:
             persist_interrupts(repos, dot, profile, snapshot, events, redactor=runtime.redactor)
         elif snapshot.interrupts:
             raise ValueError("persisting approvals requires repositories")
     finally:
-        if owned:
-            runtime.close()
+        try:
+            # A sweep's thread is scratch: its findings and audit rows are the record.
+            if scheduled is not None and scheduled.thread_id != dot.thread_id:
+                runtime.checkpointer.delete_thread(scheduled.thread_id)
+        finally:
+            if owned:
+                runtime.close()
 
 
 def _inbound_message(message: InboxMessage) -> HumanMessage:

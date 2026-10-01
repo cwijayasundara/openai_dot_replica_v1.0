@@ -17,7 +17,7 @@ from dot.assembly import GraphRuntime, build_dot_agent
 from dot.config import Settings
 from dot.packs.loader import REPO_ROOT, load_pack, seed_store
 from dot.persistence.db import Dot, InboxMessage, Json, NotFound, Repositories, User
-from dot.runtime.router import enqueue
+from dot.runtime.router import CHANNEL_KEY, enqueue
 
 PACK_VERSION = "0"
 
@@ -105,6 +105,9 @@ def _message_view(message: Any) -> Json:
     if not isinstance(message, BaseMessage):
         return {"role": "unknown", "content": str(message)}
     view: Json = {"role": message.type, "content": _text(message.content)}
+    channel = message.additional_kwargs.get(CHANNEL_KEY)
+    if isinstance(channel, dict) and isinstance(channel.get("source"), str):
+        view["source"] = channel["source"]
     name = getattr(message, "name", None)
     if isinstance(name, str) and name:
         view["name"] = name

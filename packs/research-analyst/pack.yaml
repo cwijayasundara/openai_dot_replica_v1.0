@@ -37,5 +37,8 @@ profiles:
     effects: [read, draft]
 policy: policy.yaml
 schedules:
-  - {name: sweep, cron: "*/30 7-22 * * 1-5", profile: sweep, prompt: "Run your sweep."}
-  - {name: digest, cron: "45 8 * * 1-5", profile: digest, prompt: "Send the morning digest."}
+  # Crons are read in DOT_SCHEDULE_TIMEZONE. A sweep may only read; a digest posts.
+  - {name: sweep, cron: "*/30 7-22 * * 1-5", profile: sweep, prompt: "Run your sweep.",
+     max_model_calls: 15, max_tokens: 150000}
+  - {name: digest, kind: digest, cron: "45 8 * * 1-5", profile: digest, prompt: "Send the morning digest.",
+     max_model_calls: 6, max_tokens: 60000}

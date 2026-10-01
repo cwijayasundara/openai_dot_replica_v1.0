@@ -1,6 +1,67 @@
 @import "tailwindcss";
 
+@theme {
+  --color-fog: #eef1f5;
+  --color-paper: #f8f9fb;
+  --color-ink: #1b2230;
+  --color-muted: #5b6577;
+  --color-rule: #cdd3dd;
+  --color-dot: #4b3fd1;
+  --color-dot-soft: #e4e1fa;
+  --color-wait: #a86b12;
+  --color-wait-soft: #fbefd9;
+  --color-slack: #0f766e;
+  --color-slack-soft: #d8efec;
+  --color-bad: #b42318;
+  --color-good: #1f7a3d;
+  --font-sans: var(--font-schibsted), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: var(--color-fog);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-dot);
+  outline-offset: 2px;
+}
+
+/* The dot: the one live element. It breathes while a turn or job runs. */
+.dot-mark {
+  border-radius: 9999px;
+  background: var(--color-dot);
+  transition: background-color 300ms ease;
+}
+.dot-mark[data-state="waiting"] {
+  background: var(--color-wait);
+}
+.dot-mark[data-state="working"] {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    transform: scale(0.82);
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-mark[data-state="working"] {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+.diff-add {
+  background: #e3f3e8;
+  color: var(--color-good);
+}
+.diff-del {
+  background: #fbe5e3;
+  color: var(--color-bad);
 }

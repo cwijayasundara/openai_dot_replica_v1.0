@@ -45,7 +45,10 @@ def build_send_email(deps: ToolDeps) -> BaseTool:
             credential = deps.credentials.resolve(SMTP_CREDENTIAL)
         except CredentialError:
             return fail("could not resolve email credentials")
-        message_id = deps.email.send(to=recipient, subject=subject.strip(), body=body, credential=credential)
+        try:
+            message_id = deps.email.send(to=recipient, subject=subject.strip(), body=body, credential=credential)
+        except RuntimeError as exc:
+            return fail(str(exc))
         artifact_id = deps.artifacts.put_text(body)
         return ok(artifact_id=artifact_id, to=recipient, subject=subject.strip(), message_id=message_id)
 

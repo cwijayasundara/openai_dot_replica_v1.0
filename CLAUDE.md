@@ -22,6 +22,7 @@ uv run pytest -q -m db           # needs docker compose postgres
 uv run pytest -q -m live         # needs DOT_FIREWORKS_API_KEY
 docker compose up -d postgres
 docker compose build sandbox     # build-only image, not started by compose
+cd web && pnpm typecheck && pnpm test:e2e   # UI against the scripted API (tests/support/web_e2e_server.py)
 ```
 
 ## Conventions

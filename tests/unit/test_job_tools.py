@@ -141,7 +141,8 @@ def test_start_job_records_origin_from_state_not_arguments(rig: Rig) -> None:
 
 
 def test_a_profile_can_only_start_its_granted_subagents(rig: Rig) -> None:
-    inbound = enqueue(rig.repos, "dot-1", "schedule", {"text": "Run your sweep."}, "sweep")
+    # A web turn on the sweep profile: scheduled runs get no job tools at all (test_proactive).
+    inbound = enqueue(rig.repos, "dot-1", "web", {"text": "Look into it."}, "sweep")
     model = ScriptedChatModel(script=[tools(call("start_job", subagent="coder", instructions="write code")), say("ok")])
     rig.turn(model, inbound, profile="sweep")
 

@@ -363,7 +363,10 @@ class SlackDelivery:
         return updated
 
     def _post(self, item: OutboxItem) -> None:
-        target = {"channel": item.target["channel"], "thread_ts": item.target["thread_ts"]}
+        target = {"channel": item.target["channel"]}
+        # A digest goes to the bound channel itself; replies go to the asking thread.
+        if item.target.get("thread_ts"):
+            target["thread_ts"] = item.target["thread_ts"]
         if item.kind == "message":
             # Split first: escaping first could cut an entity such as &amp; in half.
             for part in chunks(str(item.body.get("text", ""))):

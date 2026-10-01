@@ -36,8 +36,12 @@ def accept(repos: Repositories, inbound: Inbound, profile: str = "chat") -> Inbo
 
 
 def reply_ref(channel: object, source: str) -> Json | None:
-    """The address a tagged reply goes to, if it belongs to ``source``."""
-    if not isinstance(channel, dict) or channel.get("source") != source:
+    """The address a tagged reply goes to, if it belongs to ``source``.
+
+    ``via`` names the delivering channel when it differs from where the
+    request came from, as for a scheduled digest posted to Slack.
+    """
+    if not isinstance(channel, dict) or (channel.get("via") or channel.get("source")) != source:
         return None
     ref = channel.get("reply_ref")
     return dict(ref) if isinstance(ref, dict) else None

@@ -171,6 +171,23 @@ def test_a_turn_folds_only_the_leading_profile(pool: ConnectionPool, repos: Repo
     assert worker.run_once() is False
 
 
+def test_a_schedule_row_runs_as_a_turn_of_its_own(pool: ConnectionPool, repos: Repositories) -> None:
+    _seed(repos)
+    seen: list[tuple[str, list[str]]] = []
+
+    def runner(dot: Dot, profile: str, batch: Sequence[InboxMessage], channel: EventChannel) -> None:
+        del dot, channel
+        seen.append((profile, [str(message.payload["text"]) for message in batch]))
+
+    worker = Worker(pool, repos, InMemoryEventChannel(), runner)
+    enqueue(repos, "dot-a", "schedule", {"text": "s1"}, "sweep")
+    enqueue(repos, "dot-a", "web", {"text": "w1"}, "sweep")
+    enqueue(repos, "dot-a", "web", {"text": "w2"}, "sweep")
+    assert worker.run_once() and worker.run_once()
+    # A scheduled run has its own budget and thread, so nothing folds into it.
+    assert seen == [("sweep", ["s1"]), ("sweep", ["w1", "w2"])]
+
+
 def test_a_failed_turn_records_the_error_and_the_dot_continues(pool: ConnectionPool, repos: Repositories) -> None:
     _seed(repos)
     events = InMemoryEventChannel()

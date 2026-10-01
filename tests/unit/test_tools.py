@@ -200,8 +200,29 @@ def test_fetch_rejects_non_public_urls(url: str) -> None:
         public_http_url(url)
 
 
+def _public(host: str) -> list[str]:
+    return ["93.184.215.14"]
+
+
 def test_public_url_is_accepted() -> None:
-    assert public_http_url("https://example.test/a") == "https://example.test/a"
+    assert public_http_url("https://example.test/a", _public) == "https://example.test/a"
+
+
+@pytest.mark.parametrize(
+    "addresses",
+    [["169.254.169.254"], ["10.0.0.5"], ["93.184.215.14", "127.0.0.1"], ["::1"], []],
+)
+def test_a_hostname_resolving_to_a_private_address_is_refused(addresses: list[str]) -> None:
+    with pytest.raises(ValueError, match="not fetchable"):
+        public_http_url("http://metadata.google.internal/computeMetadata/v1/", lambda host: addresses)
+
+
+def test_an_unresolvable_host_is_refused() -> None:
+    def fail(host: str) -> list[str]:
+        raise OSError("no such host")
+
+    with pytest.raises(ValueError, match="could not be resolved"):
+        public_http_url("https://nowhere.invalid/", fail)
 
 
 def test_httpx_fetcher_reads_the_client(tmp_path: Path) -> None:
@@ -210,7 +231,7 @@ def test_httpx_fetcher_reads_the_client(tmp_path: Path) -> None:
 
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
-    page = HttpxFetcher(client).fetch("https://example.test/a")
+    page = HttpxFetcher(client, resolve=_public).fetch("https://example.test/a")
     assert page.status == 200
     assert page.body == "hello page"
     client.close()

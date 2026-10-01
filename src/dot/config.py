@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +38,14 @@ class Settings(BaseSettings):
     openshell_gateway: str | None = None
     sandbox_idle_s: int = 600
     max_model_calls: int = 40
+    # A schedule's ceilings when its pack sets none. Calls include its subagents'.
+    schedule_max_model_calls: int = Field(default=20, ge=1)
+    schedule_max_tokens: int = Field(default=200_000, ge=1)
+    # IANA zone the pack crons are read in, so working hours mean local hours.
+    schedule_timezone: str = "UTC"
+    # Cloud Scheduler's OIDC token: the audience it is minted for and the service account it names.
+    scheduler_audience: str | None = None
+    scheduler_invoker: str | None = None
     # Threads per worker process that run background jobs beside the inbox loop.
     job_workers: int = Field(default=2, ge=0)
 
@@ -43,10 +53,22 @@ class Settings(BaseSettings):
     slack_app_token: str | None = Field(default=None, repr=False)
     slack_signing_secret: str | None = Field(default=None, repr=False)
     smtp_credential: str | None = Field(default=None, repr=False)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_sender: str | None = None
+    smtp_starttls: bool = True
+    tavily_api_key: str | None = Field(default=None, repr=False)
     slack_mode: Literal["socket", "http"] = "socket"
     # Approvers added by this deployment, per pack: {"research-analyst": ["U123ABC"]}.
     pack_approvers: dict[str, list[str]] = Field(default_factory=dict)
     credential_backend: Literal["env", "secret_manager"] = "env"
+    # Where this process runs. A fixed dev principal is refused outside ``local``.
+    env: Literal["local", "cloud"] = "local"
+    # How the API learns the web caller: nobody, a fixed dev user, or an IAP-signed header.
+    web_auth: Literal["off", "dev", "iap"] = "off"
+    web_dev_user: str | None = None
+    iap_audience: str | None = None
     credential_bindings: dict[str, str] = Field(
         default_factory=lambda: {
             "cred:smtp": "DOT_SMTP_CREDENTIAL",
@@ -60,6 +82,19 @@ class Settings(BaseSettings):
             raise ValueError("DOT_OPENAI_BASE_URL is required for openai_compatible")
         if self.sandbox_backend == "openshell" and not self.openshell_gateway:
             raise ValueError("DOT_OPENSHELL_GATEWAY is required for the openshell sandbox")
+        if self.web_auth == "dev" and (self.env != "local" or not self.web_dev_user):
+            raise ValueError("DOT_WEB_AUTH=dev needs DOT_ENV=local and DOT_WEB_DEV_USER")
+        # Cloud Run sets K_SERVICE: a fixed dev user must never serve there, whatever DOT_ENV says.
+        if self.web_auth == "dev" and os.environ.get("K_SERVICE"):
+            raise ValueError("DOT_WEB_AUTH=dev is refused on Cloud Run")
+        if bool(self.scheduler_audience) != bool(self.scheduler_invoker):
+            raise ValueError("DOT_SCHEDULER_AUDIENCE and DOT_SCHEDULER_INVOKER are set together")
+        try:
+            ZoneInfo(self.schedule_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown DOT_SCHEDULE_TIMEZONE {self.schedule_timezone!r}") from exc
+        if self.web_auth == "iap" and not self.iap_audience:
+            raise ValueError("DOT_IAP_AUDIENCE is required for DOT_WEB_AUTH=iap")
         return self
 
     def model_name(self, role: Role) -> str:

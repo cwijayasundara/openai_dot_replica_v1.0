@@ -10,7 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml uv.lock /app/
 COPY src /app/src
-RUN uv sync --frozen --no-dev --no-editable
+# The wheel force-includes the sandbox policies, so they must exist before the install.
+COPY sandbox/policies /app/sandbox/policies
+# Editable, so the code stays at /app/src and REPO_ROOT is /app: packs and
+# config are read from the repository layout, as in development.
+RUN uv sync --frozen --no-dev
+COPY packs /app/packs
+COPY config /app/config
 
 RUN useradd --create-home --uid 1000 app
 USER app

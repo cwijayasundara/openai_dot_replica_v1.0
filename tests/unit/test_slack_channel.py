@@ -153,6 +153,16 @@ def test_replies_are_escaped_threaded_unfurl_free_and_split(rig: Rig) -> None:
     assert not rig.delivery.deliver_once()
 
 
+def test_a_digest_starts_a_message_in_the_bound_channel(rig: Rig) -> None:
+    rig.outbox.add("dot-1", "slack", "message", {"channel": "C123"}, {"text": "Morning digest"})
+    rig.outbox.add("dot-1", "slack", "message", {"channel": "C123", "thread_ts": "2.2"}, {"text": "A reply"})
+
+    assert rig.delivery.deliver_once() and rig.delivery.deliver_once()
+    digest, reply = rig.slack.made("chat.postMessage")
+    assert digest["channel"] == "C123" and "thread_ts" not in digest and digest["text"] == "Morning digest"
+    assert reply["thread_ts"] == "2.2"
+
+
 def test_a_failing_post_is_retried_then_parked_without_blocking_forever(rig: Rig) -> None:
     target = {"channel": "D1", "thread_ts": "1.1"}
     rig.outbox.add("dot-1", "slack", "message", target, {"text": "stuck"})

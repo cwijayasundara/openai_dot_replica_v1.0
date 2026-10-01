@@ -33,6 +33,7 @@ from .config import Role, Settings, get_settings
 from .jobs.store import JobStore
 from .jobs.tools import JOB_EFFECTS, build_job_tools
 from .middleware.audit import AuditMiddleware
+from .middleware.budget import BudgetMiddleware, RunBudget
 from .middleware.guard import FS_TOOLS, SurfaceGuard, ToolSurfacePolicy
 from .middleware.guardian import GuardianMiddleware
 from .middleware.job_control import JobControlMiddleware
@@ -43,6 +44,8 @@ from .models import chat_model
 from .packs.loader import REPO_ROOT, load_pack, memories_namespace, wiki_namespace
 from .packs.schema import LoadedPack, Profile, SubagentSpec
 from .persistence.db import AuditEvent, Dot, Job, Repositories
+from .proactive.findings import FINDING_EFFECTS, build_finding_tools
+from .proactive.runs import ScheduledRun
 from .safety.audit import AuditWriter
 from .safety.credentials import RedactingBroker, build_credential_broker
 from .safety.guardian import Guardian
@@ -54,6 +57,9 @@ from .tools.artifacts import ArtifactStore
 from .tools.effects import Effect
 from .tools.native import native_registry
 from .tools.native.deps import ToolDeps
+from .tools.native.fetch import HttpxFetcher
+from .tools.native.smtp import SmtpTransport
+from .tools.native.tavily import TavilySearch
 from .tools.registry import ToolRegistry
 
 # The supervisor reaches the sandbox through the coder subagent, not these tools.
@@ -175,11 +181,14 @@ def build_dot_agent(
     model: BaseChatModel | None = None,
     guardian: Guardian | None = None,
     sandbox_factory: Callable[[str], RunSandbox] | None = None,
+    scheduled: ScheduledRun | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Build the dot's supervisor for one capability profile.
 
     Policy, Guardian, audit and approval interrupts are enforced here.
-    The sandbox factory is not called here.
+    The sandbox factory is not called here. A scheduled run runs on its
+    own thread id, may record findings, starts no background job (it would
+    escape the budget) and stops at the schedule's budget.
     """
     settings = settings or get_settings()
     runtime = runtime or build_graph_runtime(settings)
@@ -194,9 +203,18 @@ def build_dot_agent(
     # deepagents 0.7 adds a general-purpose subagent that inherits execute and skips this guard.
     _disable_general_purpose(supervisor)
     registry = native_registry(deps)
+    budget: RunBudget | None = None
+    if scheduled is not None:
+        if runtime.audit_repositories is None:
+            raise RuntimeError("a scheduled run needs the runtime's repositories")
+        dot = replace(dot, thread_id=scheduled.thread_id)
+        budget = scheduled.budget
+        for tool in build_finding_tools(runtime.audit_repositories, dot.dot_id, scheduled.schedule.name):
+            registry.register(tool.name, FINDING_EFFECTS[tool.name], tool)
     # task and the job tools only delegate; the subagent gates each consequential tool separately.
     policy = PolicyResolver(
-        loaded.policy, registry.effects() | FILESYSTEM_EFFECTS | {"task": Effect.read} | JOB_EFFECTS
+        loaded.policy,
+        registry.effects() | FILESYSTEM_EFFECTS | {"task": Effect.read} | JOB_EFFECTS | FINDING_EFFECTS,
     )
     guardian = guardian or Guardian(lambda: _role_model("fast", settings, model), redactor=runtime.redactor)
     audit = AuditWriter(
@@ -204,7 +222,7 @@ def build_dot_agent(
     )
     granted = _granted_subagents(loaded, selected)
     tools = registry.for_profile(selected)
-    if granted and runtime.jobs is not None:
+    if granted and runtime.jobs is not None and scheduled is None:
         tools += build_job_tools(runtime.jobs, deps.artifacts, dot.dot_id, profile, granted)
     surface = ToolSurfacePolicy(
         allowed=frozenset(tool.name for tool in tools) | ({"task"} if granted else frozenset()),
@@ -232,6 +250,7 @@ def build_dot_agent(
             runtime,
             dot.thread_id,
             profile,
+            budget,
         )
         for spec in granted
     ]
@@ -244,7 +263,15 @@ def build_dot_agent(
         skills=["/memories/skills/"],
         backend=backend,
         middleware=_chain(
-            surface, settings, dot.dot_id, policy, guardian, audit, runtime.redactor, capture_instruction=True
+            surface,
+            settings,
+            dot.dot_id,
+            policy,
+            guardian,
+            audit,
+            runtime.redactor,
+            capture_instruction=True,
+            budget=budget,
         ),
         checkpointer=runtime.checkpointer,
         store=runtime.store,
@@ -256,8 +283,23 @@ def dot_artifacts(settings: Settings, dot_id: str) -> ArtifactStore:
     return ArtifactStore(Path(settings.object_root) / dot_id)
 
 
+def default_tool_deps(settings: Settings, dot_id: str) -> ToolDeps:
+    """The worker's real transports. Each is enabled only when it is configured."""
+    search = TavilySearch(settings.tavily_api_key) if settings.tavily_api_key else None
+    email = None
+    if settings.smtp_host and settings.smtp_username and settings.smtp_sender:
+        email = SmtpTransport(
+            settings.smtp_host,
+            settings.smtp_port,
+            settings.smtp_username,
+            settings.smtp_sender,
+            starttls=settings.smtp_starttls,
+        )
+    return ToolDeps(dot_artifacts(settings, dot_id), search=search, fetcher=HttpxFetcher(), email=email)
+
+
 def _tool_deps(dot: Dot, settings: Settings, runtime: GraphRuntime, deps: ToolDeps | None) -> ToolDeps:
-    deps = deps or ToolDeps(dot_artifacts(settings, dot.dot_id))
+    deps = deps or default_tool_deps(settings, dot.dot_id)
     for secret in _secret_values(settings):
         runtime.redactor.add(secret)
     broker = (
@@ -366,6 +408,7 @@ def _subagent_spec(
     runtime: GraphRuntime,
     thread_id: str,
     profile: str,
+    budget: RunBudget | None,
 ) -> SubAgent:
     if spec.name == "coder" and (spec.model != "heavy" or not spec.sandbox or set(spec.tools) - FS_TOOLS):
         raise ValueError("coder must use the heavy model and sandbox, with execute and file tools only")
@@ -375,7 +418,9 @@ def _subagent_spec(
         allowed |= _SHELL_TOOLS
     surface = ToolSurfacePolicy(allowed=frozenset(allowed), subagents=frozenset())
     audit = AuditWriter(runtime.audit_repositories, dot_id, thread_id, profile, spec.name, runtime.redactor, policy)
-    middleware = _chain(surface, settings, dot_id, policy, guardian, audit, runtime.redactor, capture_instruction=False)
+    middleware = _chain(
+        surface, settings, dot_id, policy, guardian, audit, runtime.redactor, capture_instruction=False, budget=budget
+    )
     if spec.sandbox:
         # Override the inherited CompositeBackend so file tools cannot edit memory/wiki.
         middleware.insert(0, FilesystemMiddleware(backend=sandbox_backend))
@@ -404,6 +449,7 @@ def _chain(
     capture_instruction: bool,
     instruction: str | None = None,
     fail_hard: bool = False,
+    budget: RunBudget | None = None,
 ) -> list[AgentMiddleware[Any, Any, Any]]:
     reviewer = GuardianMiddleware(
         guardian, policy, surface, capture_instruction=capture_instruction, audit=audit, instruction=instruction
@@ -432,7 +478,12 @@ def _chain(
             jitter=False,
             on_failure="error" if fail_hard else "continue",
         ),
-        ModelCallLimitMiddleware(run_limit=settings.max_model_calls, exit_behavior="error" if fail_hard else "end"),
+        # A schedule's budget replaces the call limit; its "end" would post a limit notice as the reply.
+        BudgetMiddleware(budget)
+        if budget is not None
+        else ModelCallLimitMiddleware(
+            run_limit=settings.max_model_calls, exit_behavior="error" if fail_hard else "end"
+        ),
     ]
 
 
@@ -448,6 +499,7 @@ def _secret_values(settings: Settings) -> list[str]:
         settings.slack_app_token,
         settings.slack_signing_secret,
         settings.smtp_credential,
+        settings.tavily_api_key,
     )
     return [value for value in values if value]
 

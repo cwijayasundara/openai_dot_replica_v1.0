@@ -67,6 +67,8 @@ _DECIDED = {"approve": "Approved", "edit": "Approved with edits", "reject": "Rej
 NOT_LINKED = "This Slack account is not linked to a dot. Ask an operator to run `dot link-slack`."
 NOT_OWNER = "Only this dot's owner can ask it to do things."
 NOT_CORRECTABLE = 'This message can\'t be corrected here. Use "Correct this" in the web UI.'
+CORRECTION_SAVED = "Thanks. The dot will learn from this correction."
+CORRECTION_FAILED = "The correction could not be saved."
 
 # Files a correction by a Slack user against one of the dot's AI messages.
 Corrector = Callable[[Dot, str, CorrectionBody], Episode]
@@ -314,15 +316,20 @@ def build_app(
             except ValidationError:
                 ack(response_action="errors", errors={"text": "Say what the dot should do differently."})
                 return
+            # Close the modal now: the thread scan can outlast Slack's three seconds, and a
+            # timed-out submit invites a resubmit that would file a duplicate episode.
+            ack()
             try:
                 correct(dot, user, correction)
+                outcome = CORRECTION_SAVED
             except CorrectionTooOld:
-                ack(response_action="errors", errors={"text": "This message is too old to correct."})
-                return
+                outcome = "This message is too old to correct."
             except NotFound:
-                ack(response_action="errors", errors={"text": NOT_CORRECTABLE})
-                return
-            ack()
+                outcome = NOT_CORRECTABLE
+            except Exception:
+                log.exception("filing a Slack correction for dot %s failed", dot.dot_id)
+                outcome = CORRECTION_FAILED
+            _direct(client, user, outcome)
 
     return app
 
@@ -381,6 +388,14 @@ def _notify(client: WebClient, event: Json, text: str) -> None:
         client.chat_postEphemeral(channel=event["channel"], user=event["user"], text=text)
     else:
         client.chat_postMessage(channel=event["channel"], thread_ts=event.get("thread_ts") or event["ts"], text=text)
+
+
+def _direct(client: WebClient, user: str, text: str) -> None:
+    """A DM to the user. It reaches them even where the bot is not in the channel."""
+    try:
+        client.chat_postMessage(channel=user, text=text)
+    except SlackApiError as exc:
+        log.warning("could not DM %s: %s", user, _slack_error(exc))
 
 
 def _ephemeral(client: WebClient, body: Json, text: str) -> None:

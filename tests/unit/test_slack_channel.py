@@ -17,6 +17,9 @@ from slack_sdk.signature import SignatureVerifier
 from dot.channels.base import DeliveringEventChannel
 from dot.channels.outbox import PARK_AFTER, MemoryOutbox
 from dot.channels.slack import (
+    CORRECTION_FAILED,
+    CORRECTION_SAVED,
+    NOT_CORRECTABLE,
     NOT_LINKED,
     NOT_OWNER,
     SlackDelivery,
@@ -29,7 +32,7 @@ from dot.channels.slack import (
 from dot.config import Settings
 from dot.memory.episodes import CorrectionTooOld
 from dot.packs.loader import REPO_ROOT, load_pack
-from dot.persistence.db import Approval, ChannelBinding, Dot, InboxMessage, MemoryRepositories, User
+from dot.persistence.db import Approval, ChannelBinding, Dot, InboxMessage, MemoryRepositories, NotFound, User
 from dot.runtime.turns import InMemoryEventChannel, TurnEvent
 from dot.runtime.worker import _inbound_message
 from dot.surfaces.api import create_app
@@ -326,16 +329,20 @@ def _posted_reply(rig: Rig) -> str:
     return "5.0"
 
 
-def _correcting_app(rig: Rig, correct: Any) -> Any:
+def _correcting_app(rig: Rig, correct: Any, *, process_before_response: bool = True) -> Any:
     return build_app(
         rig.repos,
         rig.outbox,
         client=rig.slack,
         slack_signatures_checked=False,
-        process_before_response=True,
+        process_before_response=process_before_response,
         authorize=authorize,
         correct=correct,
     )
+
+
+def _dms_to(rig: Rig, user: str) -> list[str]:
+    return [str(m["text"]) for m in rig.slack.made("chat.postMessage") if m["channel"] == user]
 
 
 def test_the_correct_shortcut_files_a_correction_for_the_owner(rig: Rig) -> None:
@@ -351,8 +358,10 @@ def test_the_correct_shortcut_files_a_correction_for_the_owner(rig: Rig) -> None
 
     blank = rig.send(submit_correction(opened["view"]["private_metadata"], OWNER, "   "))
     assert json.loads(blank.body)["response_action"] == "errors" and filed == []
-    rig.send(submit_correction(opened["view"]["private_metadata"], OWNER, "Don't cc my manager"))
+    saved = rig.send(submit_correction(opened["view"]["private_metadata"], OWNER, "Don't cc my manager"))
+    assert saved.status == 200 and not saved.body  # the modal closes
     assert filed == [("dot-1", OWNER, "ai-1", "Don't cc my manager")]
+    assert _dms_to(rig, OWNER) == [CORRECTION_SAVED]
 
 
 def test_the_correct_shortcut_refuses_unknown_messages_and_outsiders(rig: Rig) -> None:
@@ -365,16 +374,57 @@ def test_the_correct_shortcut_refuses_unknown_messages_and_outsiders(rig: Rig) -
     metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
     refused = rig.send(submit_correction(metadata, OTHER, "No"))
     assert json.loads(refused.body)["response_action"] == "errors" and filed == []
+    gone = rig.send(submit_correction(json.dumps({"dot_id": "dot-9", "message_id": "ai-1"}), OWNER, "No"))
+    assert "no longer exists" in json.loads(gone.body)["errors"]["text"] and filed == []
+    assert rig.slack.made("chat.postMessage") == []
 
 
-def test_the_correct_shortcut_reports_a_message_too_old_to_correct(rig: Rig) -> None:
-    def too_old(*_: Any) -> None:
-        raise CorrectionTooOld()
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [
+        (CorrectionTooOld(), "This message is too old to correct."),
+        (NotFound("messages", "ai-1"), NOT_CORRECTABLE),
+        (RuntimeError("no model key"), CORRECTION_FAILED),
+    ],
+)
+def test_the_correct_shortcut_reports_a_failed_correction_by_dm(rig: Rig, raised: Exception, expected: str) -> None:
+    def failing(*_: Any) -> None:
+        raise raised
 
-    rig.app = _correcting_app(rig, too_old)
+    rig.app = _correcting_app(rig, failing)
     metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
-    answer = json.loads(rig.send(submit_correction(metadata, OWNER, "Don't cc my manager")).body)
-    assert answer["response_action"] == "errors" and "too old" in answer["errors"]["text"]
+    answer = rig.send(submit_correction(metadata, OWNER, "Don't cc my manager"))
+    assert answer.status == 200 and not answer.body
+    assert _dms_to(rig, OWNER) == [expected]
+
+
+def test_a_failed_correction_dm_does_not_fail_the_submit(rig: Rig) -> None:
+    filed: list[object] = []
+    rig.app = _correcting_app(rig, lambda *a: filed.append(a) or None)
+    rig.slack.failures["chat.postMessage"] = ["cannot_dm_bot"]
+    metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
+    answer = rig.send(submit_correction(metadata, OWNER, "Don't cc my manager"))
+    assert answer.status == 200 and len(filed) == 1
+
+
+def test_the_correct_shortcut_acknowledges_before_filing(rig: Rig) -> None:
+    # Slack's three-second deadline: the modal must close before the slow lookup.
+    release, filed = threading.Event(), threading.Event()
+
+    def slow(*_: Any) -> None:
+        assert release.wait(5)
+        filed.set()
+
+    rig.app = _correcting_app(rig, slow, process_before_response=False)
+    metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
+    answer = rig.send(submit_correction(metadata, OWNER, "Don't cc my manager"))
+    assert answer.status == 200 and not filed.is_set()
+    release.set()
+    assert filed.wait(5)
+    deadline = time.monotonic() + 5
+    while not _dms_to(rig, OWNER) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _dms_to(rig, OWNER) == [CORRECTION_SAVED]
 
 
 def test_the_correct_shortcut_is_not_registered_without_a_corrector(rig: Rig) -> None:

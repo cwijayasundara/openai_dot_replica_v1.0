@@ -55,13 +55,18 @@ modal for "what should the dot do differently?". On submit it files the same
 correction episode as the web UI's button (`record_correction`), which nightly
 reflection reads.
 
+- **Result by DM.** Access and an empty text are checked before the modal
+  closes, and refused inline. Finding the message can take longer than Slack's
+  three seconds, so the modal closes first and the outcome arrives as a DM from
+  the app: saved, too old, not correctable here, or could not be saved.
+
 - **Who.** The dot's owner (their linked Slack id) or a Slack id in the pack's
   approvers plus `DOT_PACK_APPROVERS`: the same rule as the web and the same
   identity approval buttons use. The episode records the Slack user id.
 - **Which message.** The delivery loop records which AI message each posted
   reply came from (`message_posts`). Replies posted before that mapping existed,
   and anything the dot did not post, get a private "use the web UI" notice.
-  Messages older than the correction scan window are refused as too old.
+  Messages older than the correction scan window are reported as too old.
 - **Model settings.** To find the message, the Slack process builds the dot's
   agent (never invokes it) to read its checkpointed thread. Building it
   constructs the chat model, which needs an API key, so the Slack process needs
@@ -142,7 +147,8 @@ Either way, the C1 path is fully exercised.
   - escaping, threading, unfurl settings and chunking;
   - retry and parking;
   - cards: posting, approve, non-approver, the edit modal, and updates;
-  - the "Correct this" shortcut: modal, access, unknown and too-old messages;
+  - the "Correct this" shortcut: modal, access, ack before filing, and DM
+    outcomes;
   - `link-slack`.
 - `tests/contract/test_slack_db.py` (`-m db`) runs the outbox contract and the
   whole story against Postgres. The worker, the job runner and the delivery

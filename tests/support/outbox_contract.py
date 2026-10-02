@@ -46,3 +46,9 @@ def exercise(outbox: Outbox, repos: Repositories) -> None:
     assert (change.approval_id, change.status, change.decided_by, change.ref["ts"]) == ("a1", "approve", "U1", "9.9")
     outbox.card_shown("a1", "slack", "approve")
     assert outbox.card_changes("slack") == []
+
+    assert outbox.find_post("slack", "D1", "5.5") is None
+    outbox.record_post("slack", "D1", "5.5", "d1", "ai-1")
+    outbox.record_post("slack", "D1", "5.5", "d1", "ai-2")  # a repeat keeps the first
+    assert outbox.find_post("slack", "D1", "5.5") == ("d1", "ai-1")
+    assert outbox.find_post("slack", "D2", "5.5") is None

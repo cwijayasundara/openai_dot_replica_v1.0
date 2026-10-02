@@ -112,7 +112,9 @@ def test_persist_authorize_and_resume(
         assert repos.get_dot(dot.dot_id).status == "active"
         assert len(repos.episodes) == count
         # The resumed run answers the web request that paused it.
-        assert events.events[-1].detail == {
+        resumed = dict(events.events[-1].detail)
+        assert isinstance(resumed.pop("message_id"), str)
+        assert resumed == {
             "role": "assistant",
             "text": "done",
             "channel": {"source": "web", "inbox_id": inbound.id},

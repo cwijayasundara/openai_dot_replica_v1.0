@@ -121,6 +121,8 @@ def _publish_message(dot_id: str, message: Any, channel: EventChannel, reply_to:
         said: Json = {"role": "assistant", "text": text}
         if reply_to is not None:
             said["channel"] = reply_to
+        if isinstance(message.id, str):
+            said["message_id"] = message.id
         channel.publish(TurnEvent(dot_id, "message", said))
     for call in calls:
         name = str(call.get("name", ""))

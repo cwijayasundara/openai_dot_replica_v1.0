@@ -68,6 +68,12 @@ def test_graph_updates_become_tool_job_and_interrupt_events() -> None:
     assert channel.events[3].detail == {"value": {"tool": "send_email"}}
 
 
+def test_an_ai_reply_event_carries_the_message_id() -> None:
+    channel = InMemoryEventChannel()
+    publish_graph_update("d1", {"agent": {"messages": [AIMessage(content="Hi.", id="ai-7")]}}, channel)
+    assert channel.events[0].detail == {"role": "assistant", "text": "Hi.", "message_id": "ai-7"}
+
+
 def test_subscriber_receives_events_already_published_and_later_ones() -> None:
     channel = InMemoryEventChannel()
     channel.publish(TurnEvent("d1", "message", {"role": "user", "text": "hi"}))
@@ -104,7 +110,9 @@ def test_agent_turn_uses_the_dot_thread(tmp_path: Path) -> None:
     messages: list[Any] = state.values["messages"]
     assert any(isinstance(message, HumanMessage) and message.content == "[web] find q" for message in messages)
     assert [event.detail["name"] for event in events.events if event.kind == "tool_call"] == ["web_search"]
-    assert events.events[-1] == TurnEvent(
+    last = events.events[-1]
+    assert isinstance(last.detail.pop("message_id"), str)
+    assert last == TurnEvent(
         dot.dot_id,
         "message",
         {"role": "assistant", "text": "Here is the answer.", "channel": {"source": "web", "inbox_id": 1}},

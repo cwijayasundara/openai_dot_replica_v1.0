@@ -153,6 +153,29 @@ def test_replies_are_escaped_threaded_unfurl_free_and_split(rig: Rig) -> None:
     assert not rig.delivery.deliver_once()
 
 
+def test_each_posted_chunk_records_the_ai_message_it_came_from(rig: Rig) -> None:
+    channel = DeliveringEventChannel(InMemoryEventChannel(), rig.outbox, ["slack"])
+    text = "x" * 5_000  # two chunks
+    channel.publish(
+        TurnEvent(
+            "dot-1",
+            "message",
+            {
+                "role": "assistant",
+                "text": text,
+                "message_id": "ai-1",
+                "channel": {"source": "slack", "reply_ref": {"channel": "D1", "thread_ts": "1.0"}},
+            },
+        )
+    )
+    assert rig.delivery.deliver_once()
+    posts = rig.slack.made("chat.postMessage")
+    assert len(posts) == 2
+    for posted in rig.slack.posted_ts():
+        assert rig.outbox.find_post("slack", "D1", posted) == ("dot-1", "ai-1")
+    assert rig.outbox.find_post("slack", "D1", "9.9") is None
+
+
 def test_a_digest_starts_a_message_in_the_bound_channel(rig: Rig) -> None:
     rig.outbox.add("dot-1", "slack", "message", {"channel": "C123"}, {"text": "Morning digest"})
     rig.outbox.add("dot-1", "slack", "message", {"channel": "C123", "thread_ts": "2.2"}, {"text": "A reply"})

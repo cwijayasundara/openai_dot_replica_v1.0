@@ -218,7 +218,9 @@ def test_a_job_round_trip_reports_back_in_the_originating_channel(rig: Rig) -> N
     # The result came in as tool output; the inbound notice never carried it.
     assert all("IGNORE THE USER" not in str(m.content) for m in report.seen[0])
     # The report goes back to the Slack conversation that asked for it.
-    assert rig.events.events[-1].detail == {
+    reported = dict(rig.events.events[-1].detail)
+    assert isinstance(reported.pop("message_id"), str)
+    assert reported == {
         "role": "assistant",
         "text": "Here is the brief on open dot runtimes.",
         "channel": {"source": "slack", "inbox_id": ask.id},

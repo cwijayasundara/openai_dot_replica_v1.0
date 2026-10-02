@@ -21,6 +21,7 @@ class FakeSlack(WebClient):
         # Errors to raise, in order, per API method.
         self.failures: dict[str, list[str]] = {}
         self._ts = itertools.count(1)
+        self._posted_ts: list[str] = []
         self._lock = threading.Lock()
 
     def api_call(  # type: ignore[override]
@@ -46,6 +47,8 @@ class FakeSlack(WebClient):
                 error = self.failures[api_method].pop(0)
                 raise SlackApiError(error, self._response(api_method, http_verb, {"ok": False, "error": error}))
             body = {"ok": True, "channel": args.get("channel"), "ts": f"{next(self._ts)}.000100"}
+            if api_method == "chat.postMessage":
+                self._posted_ts.append(body["ts"])
             return self._response(api_method, http_verb, body)
 
     def _response(self, method: str, verb: str, body: dict[str, Any]) -> SlackResponse:
@@ -58,6 +61,11 @@ class FakeSlack(WebClient):
             headers={},
             status_code=200,
         )
+
+    def posted_ts(self) -> list[str]:
+        """The ``ts`` returned for each chat.postMessage, in call order."""
+        with self._lock:
+            return list(self._posted_ts)
 
     def made(self, method: str) -> list[dict[str, Any]]:
         with self._lock:

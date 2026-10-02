@@ -75,6 +75,14 @@ class Outbox(Protocol):
 
     def card_shown(self, approval_id: str, channel: str, status: str) -> None: ...
 
+    def record_post(self, channel: str, conversation: str, ts: str, dot_id: str, message_id: str) -> None:
+        """Remember which AI message a posted reply came from."""
+        ...
+
+    def find_post(self, channel: str, conversation: str, ts: str) -> tuple[str, str] | None:
+        """``(dot_id, message_id)`` for a posted reply, if recorded."""
+        ...
+
 
 class MemoryOutbox:
     def __init__(self, repos: MemoryRepositories) -> None:
@@ -83,6 +91,7 @@ class MemoryOutbox:
         self.items: dict[int, OutboxItem] = {}
         self._seen: set[tuple[str, str]] = set()
         self._cards: dict[tuple[str, str], tuple[Json, str]] = {}
+        self._posts: dict[tuple[str, str, str], tuple[str, str]] = {}
         self._next_id = 0
 
     def add(self, dot_id: str, channel: str, kind: str, target: Json, body: Json) -> None:
@@ -132,6 +141,14 @@ class MemoryOutbox:
         with self._lock:
             ref, _ = self._cards[(approval_id, channel)]
             self._cards[(approval_id, channel)] = (ref, status)
+
+    def record_post(self, channel: str, conversation: str, ts: str, dot_id: str, message_id: str) -> None:
+        with self._lock:
+            self._posts.setdefault((channel, conversation, ts), (dot_id, message_id))
+
+    def find_post(self, channel: str, conversation: str, ts: str) -> tuple[str, str] | None:
+        with self._lock:
+            return self._posts.get((channel, conversation, ts))
 
 
 class PostgresOutbox:
@@ -198,6 +215,22 @@ class PostgresOutbox:
                 "UPDATE approval_posts SET shown_status = %s WHERE approval_id = %s AND channel = %s",
                 (status, approval_id, channel),
             )
+
+    def record_post(self, channel: str, conversation: str, ts: str, dot_id: str, message_id: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO message_posts (channel, conversation, ts, dot_id, message_id)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (channel, conversation, ts, dot_id, message_id),
+            )
+
+    def find_post(self, channel: str, conversation: str, ts: str) -> tuple[str, str] | None:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT dot_id, message_id FROM message_posts WHERE channel = %s AND conversation = %s AND ts = %s",
+                (channel, conversation, ts),
+            ).fetchone()
+        return (str(row[0]), str(row[1])) if row is not None else None
 
     def _row(self, sql: str, params: tuple[Any, ...]) -> dict[str, Any] | None:
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:

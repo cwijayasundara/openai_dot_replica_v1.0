@@ -370,7 +370,14 @@ class SlackDelivery:
         if item.kind == "message":
             # Split first: escaping first could cut an entity such as &amp; in half.
             for part in chunks(str(item.body.get("text", ""))):
-                self._client.chat_postMessage(**target, text=escape(part), unfurl_links=False, unfurl_media=False)
+                posted = self._client.chat_postMessage(
+                    **target, text=escape(part), unfurl_links=False, unfurl_media=False
+                )
+                message_id = item.body.get("message_id")
+                if isinstance(message_id, str):
+                    self._outbox.record_post(
+                        CHANNEL, str(posted["channel"]), str(posted["ts"]), item.dot_id, message_id
+                    )
             return
         if item.kind == "approval":
             approval_id, tool, args = str(item.body["approval_id"]), str(item.body["tool"]), item.body.get("args")

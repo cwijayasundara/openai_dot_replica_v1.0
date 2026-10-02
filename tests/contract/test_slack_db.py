@@ -58,7 +58,7 @@ def pool() -> Iterator[ConnectionPool]:
     with opened.connection() as conn:
         conn.execute(
             "TRUNCATE users, dots, inbox, jobs, approvals, audit_log, findings, episodes,"
-            " memory_versions, channel_bindings, outbox, channel_events, approval_posts RESTART IDENTITY CASCADE"
+            " memory_versions, channel_bindings, outbox, channel_events, approval_posts, message_posts RESTART IDENTITY CASCADE"
         )
     yield opened
     opened.close()

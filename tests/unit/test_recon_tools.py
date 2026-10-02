@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -412,3 +413,71 @@ def test_research_analyst_is_not_offered_recon_tools(tmp_path: Path, fake: FakeR
         runtime.close()
     offered = set(model.offered[0])
     assert offered and not offered & set(TOOLS)
+
+
+_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.mark.skipif(_ROOT, reason="root ignores file permissions")
+def test_list_drops_reports_unreadable_entries_and_keeps_going(tmp_path: Path, fake: FakeRecon) -> None:
+    deps = _deps(tmp_path, fake)
+    assert deps.drop_root is not None
+    good = _drop(deps, "sponsor-a", "good.csv")
+    locked = _drop(deps, "sponsor-a", "locked.csv")
+    os.mkfifo(deps.drop_root / "sponsor-a" / "pipe.csv")
+    _drop(deps, "sponsor-b", "b.csv")
+    shut = deps.drop_root / "sponsor-b"
+    locked.chmod(0)
+    shut.chmod(0)
+    try:
+        result = _call(deps, "list_drops")
+    finally:
+        locked.chmod(0o600)
+        shut.chmod(0o700)
+    assert result["ok"] is True
+    files = {(f["sponsor_id"], f["file_name"]): f for f in result["files"]}
+    assert files["sponsor-a", "good.csv"]["supported"] is True
+    assert files["sponsor-a", "good.csv"]["sha256"] == hashlib.sha256(good.read_bytes()).hexdigest()
+    for key in [("sponsor-a", "locked.csv"), ("sponsor-a", "pipe.csv"), ("sponsor-b", None)]:
+        assert (files[key]["supported"], files[key]["reason"], files[key]["sha256"]) == (False, "unreadable", None)
+
+
+def test_list_drops_marks_hidden_files_unsupported(tmp_path: Path, fake: FakeRecon) -> None:
+    deps = _deps(tmp_path, fake)
+    _drop(deps, "sponsor-a", ".h.csv")
+    (entry,) = _call(deps, "list_drops")["files"]
+    assert (entry["file_name"], entry["supported"], entry["reason"]) == (".h.csv", False, "hidden")
+
+
+def test_list_drops_survives_a_failing_declined_lookup(
+    tmp_path: Path, fake: FakeRecon, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken() -> frozenset[tuple[str, str, str]]:
+        raise RuntimeError("connection to db-secret-host refused")
+
+    deps = replace(_deps(tmp_path, fake), recon_declined=broken)
+    _drop(deps, "sponsor-a", "a.csv")
+    with caplog.at_level("WARNING"):
+        raw = recon.build_list_drops(deps).invoke({})
+    assert "db-secret-host" not in raw
+    (entry,) = json.loads(raw)["files"]
+    assert entry["declined"] is False and entry["supported"] is True
+    assert "declined" in caplog.text
+
+
+@pytest.mark.parametrize(("sponsor_id", "file_name"), [("sponsor-a", "a\x00.csv"), ("sponsor-a\x00", "a.csv")])
+def test_start_run_refuses_a_nul_byte(tmp_path: Path, fake: FakeRecon, sponsor_id: str, file_name: str) -> None:
+    deps = _deps(tmp_path, fake)
+    _drop(deps, "sponsor-a", "a.csv")
+    result = _call(deps, "start_run", sponsor_id=sponsor_id, file_name=file_name, sha256=SHA)
+    assert result["ok"] is False and result["error"] in {"invalid file name", "invalid sponsor id"}
+    assert fake.uploads == []
+
+
+def test_start_run_refuses_a_fifo(tmp_path: Path, fake: FakeRecon) -> None:
+    deps = _deps(tmp_path, fake)
+    assert deps.drop_root is not None
+    (deps.drop_root / "sponsor-a").mkdir()
+    os.mkfifo(deps.drop_root / "sponsor-a" / "pipe.csv")
+    result = _call(deps, "start_run", sponsor_id="sponsor-a", file_name="pipe.csv", sha256=SHA)
+    assert result == {"ok": False, "error": "the file could not be read"}

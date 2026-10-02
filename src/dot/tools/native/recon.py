@@ -7,8 +7,10 @@ contents never reach the model, only names, sizes and hashes.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -25,21 +27,43 @@ SPONSOR_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 NOT_CONFIGURED = "the recon workbench is not configured"
 _CHUNK = 1024 * 1024
+# O_NOFOLLOW refuses a symlink swapped in after the is_symlink check; O_NONBLOCK keeps a
+# FIFO from hanging the open. Only regular files are read.
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+
+log = logging.getLogger(__name__)
 
 
-def _sha256(path: Path) -> str:
+def _open_regular(path: Path) -> tuple[int, int]:
+    """An fd and size for a regular file. Raises OSError for anything else."""
+    fd = os.open(path, _OPEN_FLAGS)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        raise OSError(f"not a regular file: {path.name}")
+    return fd, info.st_size
+
+
+def _sha256(path: Path) -> tuple[int, str]:
+    fd, size = _open_regular(path)
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with os.fdopen(fd, "rb") as handle:
         while chunk := handle.read(_CHUNK):
             digest.update(chunk)
-    return digest.hexdigest()
+    return size, digest.hexdigest()
 
 
-def _read_no_follow(path: Path) -> bytes:
-    # O_NOFOLLOW closes the gap between the symlink check and the read.
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "rb") as handle:
-        return handle.read()
+def _entry(sponsor_id: str, file_name: str | None, reason: str) -> dict[str, Any]:
+    return {
+        "sponsor_id": sponsor_id,
+        "file_name": file_name,
+        "bytes": None,
+        "sha256": None,
+        "supported": False,
+        "reason": reason,
+        "run_id": None,
+        "declined": False,
+    }
 
 
 def _hours_since(value: Any) -> float | None:
@@ -68,8 +92,64 @@ def _size_reason(name: str, size: int) -> str | None:
 
 
 def _sponsor_dirs(root: Path, sponsor_id: str | None) -> list[Path]:
-    candidates = [root / sponsor_id] if sponsor_id else sorted(root.iterdir()) if root.is_dir() else []
-    return [path for path in candidates if SPONSOR_ID.fullmatch(path.name) and not path.is_symlink() and path.is_dir()]
+    try:
+        candidates = [root / sponsor_id] if sponsor_id else sorted(root.iterdir())
+    except OSError:
+        log.warning("recon drop root %s could not be listed", root)
+        return []
+    folders = []
+    for path in candidates:
+        try:
+            if SPONSOR_ID.fullmatch(path.name) and stat.S_ISDIR(path.lstat().st_mode):
+                folders.append(path)
+        except OSError:
+            continue
+    return folders
+
+
+def _declined(deps: ToolDeps) -> frozenset[tuple[str, str, str]]:
+    if deps.recon_declined is None:
+        return frozenset()
+    try:
+        return deps.recon_declined()
+    except Exception:
+        # The lookup reads the database; its error text never reaches the model.
+        log.warning("recon declined-files lookup failed; treating none as declined", exc_info=True)
+        return frozenset()
+
+
+def _drop_entry(
+    folder: Path, path: Path, known: set[str], by_sha: dict[str, str | None], declined: frozenset[tuple[str, str, str]]
+) -> dict[str, Any] | None:
+    sponsor_id = folder.name
+    try:
+        mode = path.lstat().st_mode
+    except OSError:
+        return _entry(sponsor_id, path.name, "unreadable")
+    if stat.S_ISLNK(mode):
+        return _entry(sponsor_id, path.name, "symlink")
+    if stat.S_ISDIR(mode):
+        return None
+    try:
+        size, sha = _sha256(path)
+    except OSError:
+        return _entry(sponsor_id, path.name, "unreadable")
+    if path.name.startswith("."):
+        reason: str | None = "hidden"
+    elif sponsor_id not in known:
+        reason = "unknown sponsor"
+    else:
+        reason = _size_reason(path.name, size)
+    return {
+        "sponsor_id": sponsor_id,
+        "file_name": path.name,
+        "bytes": size,
+        "sha256": sha,
+        "supported": reason is None,
+        "reason": reason,
+        "run_id": by_sha.get(sha),
+        "declined": (sponsor_id, path.name, sha) in declined,
+    }
 
 
 def build_list_sponsors(deps: ToolDeps) -> BaseTool:
@@ -100,24 +180,19 @@ def build_list_drops(deps: ToolDeps) -> BaseTool:
         except ReconError as exc:
             return fail(str(exc))
         by_sha = {str(r.get("upload_sha")): _run_id(r) for r in runs if r.get("upload_sha")}
-        declined = deps.recon_declined() if deps.recon_declined is not None else frozenset()
+        declined = _declined(deps)
         files: list[dict[str, Any]] = []
         for folder in _sponsor_dirs(deps.drop_root, sponsor_id):
-            for path in sorted(folder.iterdir()):
-                entry: dict[str, Any] = {"sponsor_id": folder.name, "file_name": path.name}
-                if path.is_symlink():
-                    entry |= {"bytes": None, "sha256": None, "supported": False, "reason": "symlink"}
-                    entry |= {"run_id": None, "declined": False}
+            try:
+                paths = sorted(folder.iterdir())
+            except OSError:
+                # One entry for the folder, so the model can say it could not be read.
+                files.append(_entry(folder.name, None, "unreadable"))
+                continue
+            for path in paths:
+                entry = _drop_entry(folder, path, known, by_sha, declined)
+                if entry is not None:
                     files.append(entry)
-                    continue
-                if not path.is_file():
-                    continue
-                size = path.stat().st_size
-                sha = _sha256(path)
-                reason = "unknown sponsor" if folder.name not in known else _size_reason(path.name, size)
-                entry |= {"bytes": size, "sha256": sha, "supported": reason is None, "reason": reason}
-                entry |= {"run_id": by_sha.get(sha), "declined": (folder.name, path.name, sha) in declined}
-                files.append(entry)
         return ok(files=files)
 
     return StructuredTool.from_function(list_drops, name="list_drops")
@@ -192,22 +267,27 @@ def build_start_run(deps: ToolDeps) -> BaseTool:
             return fail(NOT_CONFIGURED)
         if not SPONSOR_ID.fullmatch(sponsor_id):
             return fail("invalid sponsor id")
-        if not file_name or file_name != Path(file_name).name or file_name.startswith("."):
+        if not file_name or "\x00" in file_name or file_name != Path(file_name).name or file_name.startswith("."):
             return fail("invalid file name")
-        folder = deps.drop_root / sponsor_id
-        path = folder / file_name
-        # Comparing against the unresolved root also refuses a symlinked sponsor folder.
-        if path.is_symlink() or path.resolve().parent != deps.drop_root.resolve() / sponsor_id:
-            return fail("the file is outside the sponsor folder")
-        if not path.is_file():
-            return fail("file not found")
-        reason = _size_reason(file_name, path.stat().st_size)
-        if reason is not None:
-            return fail(reason)
+        if Path(file_name).suffix.lower() not in SUPPORTED:
+            return fail("unsupported type")
+        path = deps.drop_root / sponsor_id / file_name
         try:
-            data = _read_no_follow(path)
+            # Comparing against the resolved root also refuses a symlinked sponsor folder.
+            if path.is_symlink() or path.resolve().parent != deps.drop_root.resolve() / sponsor_id:
+                return fail("the file is outside the sponsor folder")
+            fd, size = _open_regular(path)
+        except FileNotFoundError:
+            return fail("file not found")
         except OSError:
             return fail("the file could not be read")
+        with os.fdopen(fd, "rb") as handle:
+            if size > MAX_BYTES:
+                return fail("too large")
+            try:
+                data = handle.read()
+            except OSError:
+                return fail("the file could not be read")
         if hashlib.sha256(data).hexdigest() != sha256:
             return fail("the file changed since it was approved")
         try:

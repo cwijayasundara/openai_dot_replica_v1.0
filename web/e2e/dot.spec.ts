@@ -5,6 +5,7 @@ import { E2E_API } from "../playwright.config";
 test("one thread across Slack and the web: message, job, approval, audit", async ({ page, request }) => {
   await page.goto("/");
   await expect(page.getByText("You have no dots yet.")).toBeVisible();
+  await page.getByLabel("Pack").selectOption("research-analyst");
   await page.getByRole("button", { name: "Create dot" }).click();
   await expect(page).toHaveURL(/\/dots\/dot-/);
 

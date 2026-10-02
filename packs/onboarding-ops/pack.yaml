@@ -20,9 +20,9 @@ policy: policy.yaml
 schedules:
   # Crons are read in DOT_SCHEDULE_TIMEZONE. Sweeps only read; the dot never answers a workbench gate.
   - {name: intake-sweep, cron: "*/15 7-22 * * 1-5", profile: sweep, max_model_calls: 8, max_tokens: 60000,
-     prompt: "Call list_drops. Record one finding per supported file that has no run and is not declined, titled 'New file <file_name> for <sponsor_id>', with its sha256 in the summary. Record one 'Skipped file <file_name> for <sponsor_id>' finding per file with a reason."}
+     prompt: "Call list_drops. Record one finding per supported file that has no run and is not declined, titled 'New file <file_name> for <sponsor_id>', with its sha256 in the summary."}
   - {name: status-sweep, cron: "0 7-22 * * 1-5", profile: sweep, max_model_calls: 12, max_tokens: 100000,
-     prompt: "Call list_runs, then get_run for runs not locked or rejected. Record one finding per run waiting at a gate, in error, or not updated for 24 hours, titled 'Run <run_id> <state>', with phase, status, age, gate message and any brief questions in the summary."}
+     prompt: "Call list_drops and record one 'Skipped file <file_name> for <sponsor_id>' finding per file with a reason. Call list_runs, then get_run for runs not locked or rejected. Record one finding per run waiting at a gate, in error, or not updated for 24 hours, titled 'Run <run_id> <state>', with phase, status, age, gate message and any brief questions in the summary."}
   - {name: intake, kind: digest, cron: "5-59/15 7-22 * * 1-5", profile: intake, findings_from: [intake-sweep],
      max_model_calls: 8, max_tokens: 60000,
      prompt: "For each 'New file' finding, call start_run with its sponsor_id, file_name and sha256. Then reply with one line per file."}

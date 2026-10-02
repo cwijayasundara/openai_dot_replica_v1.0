@@ -65,6 +65,8 @@ from .tools.native.smtp import SmtpTransport
 from .tools.native.tavily import TavilySearch
 from .tools.registry import ToolRegistry
 
+# ``decide`` stores the reviewer's decision type as the card status.
+REJECTED = "reject"
 # Where the dot's supervisor reads its preferences and skills; both live in the store.
 MEMORY_SOURCES = ["/memories/AGENTS.md"]
 SKILL_SOURCES = ["/memories/skills/"]
@@ -210,7 +212,7 @@ def build_dot_agent(
     supervisor = _role_model("supervisor", settings, model)
     # deepagents 0.7 adds a general-purpose subagent that inherits execute and skips this guard.
     _disable_general_purpose(supervisor)
-    registry = native_registry(deps)
+    registry = native_registry(deps, _declared_tools(loaded))
     budget: RunBudget | None = None
     if scheduled is not None:
         if runtime.audit_repositories is None:
@@ -339,7 +341,21 @@ def _tool_deps(dot: Dot, settings: Settings, runtime: GraphRuntime, deps: ToolDe
     )
     # The client reads its token through the redacting broker, like every other tool.
     recon = deps.recon.with_credentials(broker) if isinstance(deps.recon, ReconClient) else deps.recon
-    return replace(deps, credentials=broker, recon=recon)
+    declined = deps.recon_declined
+    if declined is None:
+        repos = runtime.audit_repositories
+        dot_id = dot.dot_id
+        declined = (lambda: _declined(repos, dot_id)) if repos is not None else frozenset
+    return replace(deps, credentials=broker, recon=recon, recon_declined=declined)
+
+
+def _declined(repos: Repositories, dot_id: str) -> frozenset[tuple[str, str, str]]:
+    """Files a human refused this dot permission to start, so sweeps stop proposing them."""
+    return frozenset(
+        (str(c.args.get("sponsor_id")), str(c.args.get("file_name")), str(c.args.get("sha256")))
+        for c in repos.list_dot_approvals(dot_id, REJECTED)
+        if c.tool == "start_run"
+    )
 
 
 def job_sandbox_key(job: Job) -> str:
@@ -378,7 +394,7 @@ def build_job_agent(
 
     job_model = _role_model(spec.model, settings, model)
     _disable_general_purpose(job_model)
-    registry = native_registry(deps)
+    registry = native_registry(deps, _declared_tools(loaded))
     policy = PolicyResolver(loaded.policy, registry.effects() | FILESYSTEM_EFFECTS)
     guardian = guardian or Guardian(lambda: _role_model("fast", settings, model), redactor=runtime.redactor)
     audit = AuditWriter(
@@ -417,6 +433,11 @@ def build_job_agent(
         checkpointer=runtime.checkpointer,
         store=runtime.store,
     )
+
+
+def _declared_tools(loaded: LoadedPack) -> frozenset[str]:
+    """Native tools the pack names, for itself or any of its subagents."""
+    return frozenset(loaded.pack.tools.native) | {name for spec in loaded.pack.subagents for name in spec.tools}
 
 
 def _granted_subagents(loaded: LoadedPack, profile: Profile) -> list[SubagentSpec]:

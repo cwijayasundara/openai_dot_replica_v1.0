@@ -115,3 +115,40 @@ def test_transport_error_is_unreachable() -> None:
 
 def test_client_has_no_gate_surface() -> None:
     assert not [n for n in dir(ReconClient) if "gate" in n]
+
+
+def test_invalid_url_and_stream_errors_are_unreachable() -> None:
+    for exc in (httpx.InvalidURL("bad url tok"), httpx.StreamConsumed()):
+
+        def boom(request: httpx.Request, exc: Exception = exc) -> httpx.Response:
+            raise exc
+
+        client, _ = _client(boom)
+        with pytest.raises(ReconError) as err:
+            client.sponsors()
+        assert str(err.value) == "workbench unreachable"
+        assert err.value.__cause__ is None
+
+
+def test_invalid_base_url_is_unreachable() -> None:
+    client = ReconClient("http://[::1", credentials=None)
+    with pytest.raises(ReconError) as err:
+        client.sponsors()
+    assert str(err.value) == "workbench unreachable"
+    assert err.value.__cause__ is None
+
+
+@pytest.mark.parametrize("body", [{}, {"id": "run-1"}, ["run-1"], "run-1", None])
+def test_start_with_malformed_body_is_unreadable(body: object) -> None:
+    client, _ = _client(lambda r: httpx.Response(202, json=body))
+    with pytest.raises(ReconError, match=r"^workbench returned an unreadable response$") as err:
+        client.start("sponsor-a", "a.csv", b"x")
+    assert err.value.__cause__ is None
+
+
+@pytest.mark.parametrize("run_id", ["../sponsors", "run-1/gate", "run-A", "run-", "x" * 10, "run-1?x=1", ""])
+def test_run_rejects_invalid_ids_without_a_request(run_id: str) -> None:
+    client, seen = _client(lambda r: httpx.Response(200, json={}))
+    with pytest.raises(ReconError, match=r"^invalid run id$"):
+        client.run(run_id)
+    assert seen == []

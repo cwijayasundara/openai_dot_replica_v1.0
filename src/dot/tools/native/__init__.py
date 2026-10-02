@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from langchain_core.tools import BaseTool
 
 from dot.tools.native.deps import ToolDeps
 from dot.tools.native.email import build_draft_email, build_send_email
 from dot.tools.native.fetch import build_fetch_url
+from dot.tools.native.recon import build_recon_tools
 from dot.tools.native.report import build_write_report
 from dot.tools.native.search import build_web_search
 from dot.tools.native.slack import build_slack_post
@@ -19,6 +22,11 @@ NATIVE_TOOL_NAMES = (
     "draft_email",
     "send_email",
     "slack_post",
+    "list_sponsors",
+    "list_drops",
+    "list_runs",
+    "get_run",
+    "start_run",
 )
 
 
@@ -30,15 +38,19 @@ def build_native_tools(deps: ToolDeps) -> list[BaseTool]:
         build_draft_email(deps),
         build_send_email(deps),
         build_slack_post(deps),
+        *build_recon_tools(deps),
     ]
 
 
-def native_registry(deps: ToolDeps) -> ToolRegistry:
-    """Builtin effects plus a callable for each v1 native tool.
+def native_registry(deps: ToolDeps, declared: Collection[str] | None = None) -> ToolRegistry:
+    """Builtin effects plus a callable for each native tool in ``declared`` (all when None).
 
+    A pack is offered only the native tools it declares. Undeclared tools keep their
+    effect, so policy still knows them, but have no callable and are never offered.
     ``execute`` keeps its effect and has no callable until the sandbox backend exists.
     """
     registry = builtin_registry()
     for tool in build_native_tools(deps):
-        registry.register(tool.name, registry.effect(tool.name), tool)
+        if declared is None or tool.name in declared:
+            registry.register(tool.name, registry.effect(tool.name), tool)
     return registry

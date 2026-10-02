@@ -17,6 +17,11 @@ NATIVE_EFFECTS: dict[str, Effect] = {
     "draft_email": Effect.draft,
     "send_email": Effect.external,
     "slack_post": Effect.external,
+    "list_sponsors": Effect.read,
+    "list_drops": Effect.read,
+    "list_runs": Effect.read,
+    "get_run": Effect.read,
+    "start_run": Effect.write,
     "execute": Effect.write,
 }
 

@@ -7,6 +7,7 @@ workbench gate. A human does that in the workbench.
 from __future__ import annotations
 
 import contextlib
+import re
 from typing import Any
 
 import httpx
@@ -15,6 +16,8 @@ from dot.tools.native.deps import CredentialBroker, CredentialError
 
 RECON_CREDENTIAL = "cred:recon"
 _DETAIL_LIMIT = 300
+# Run ids come from the model, so they are checked before they become part of a path.
+RUN_ID = re.compile(r"^run-[a-z0-9]{1,64}$")
 
 
 class ReconError(Exception):
@@ -54,6 +57,8 @@ class ReconClient:
         return runs
 
     def run(self, run_id: str) -> dict[str, Any]:
+        if not RUN_ID.fullmatch(run_id):
+            raise ReconError("invalid run id")
         run: dict[str, Any] = self._request("GET", f"/runs/{run_id}")
         return run
 
@@ -64,6 +69,8 @@ class ReconClient:
             data={"sponsor_id": sponsor_id, "entity": "affiliate"},
             files={"file": (file_name, data)},
         )
+        if not isinstance(body, dict) or not body.get("run_id"):
+            raise ReconError("workbench returned an unreadable response")
         return str(body["run_id"])
 
     def _headers(self) -> dict[str, str]:
@@ -78,7 +85,7 @@ class ReconClient:
         try:
             with httpx.Client(timeout=self._timeout_s, transport=self._transport) as client:
                 response = client.request(method, self._base_url + path, headers=self._headers(), **kwargs)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, httpx.InvalidURL, httpx.StreamError):
             raise ReconError("workbench unreachable") from None
         if not response.is_success:
             raise ReconError(f"workbench returned {response.status_code}: {_detail(response)}")

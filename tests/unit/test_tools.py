@@ -92,14 +92,15 @@ def test_every_native_tool_has_an_effect() -> None:
 
 
 def test_for_profile_filters_by_name_and_effect(tmp_path: Path) -> None:
-    registry = native_registry(_deps(tmp_path))
     pack = load_pack(REPO_ROOT / "packs" / "research-analyst")
+    declared = set(pack.pack.tools.native) | {name for spec in pack.pack.subagents for name in spec.tools}
+    registry = native_registry(_deps(tmp_path), declared)
 
     chat = [tool.name for tool in registry.for_profile(pack.pack.profiles["chat"])]
     sweep = [tool.name for tool in registry.for_profile(pack.pack.profiles["sweep"])]
     digest = [tool.name for tool in registry.for_profile(pack.pack.profiles["digest"])]
 
-    assert chat == sorted(NATIVE_TOOL_NAMES)
+    assert chat == ["draft_email", "fetch_url", "send_email", "slack_post", "web_search", "write_report"]
     assert "execute" not in chat
     assert sweep == ["fetch_url", "web_search"]
     assert digest == ["draft_email", "fetch_url", "web_search", "write_report"]

@@ -8,7 +8,7 @@ import queue
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -426,8 +426,7 @@ async def _pg_events(database_url: str, dot_id: str, request: Request) -> AsyncI
                     continue
                 kind = payload.get("kind")
                 detail = payload.get("detail")
-                known = {"message", "tool_call", "interrupt", "approval", "job_started", "job_finished", "error"}
-                if kind not in known or not isinstance(detail, dict):
+                if kind not in get_args(EventKind) or not isinstance(detail, dict):
                     continue
                 yield _sse(TurnEvent(dot_id, cast(EventKind, kind), detail))
     finally:

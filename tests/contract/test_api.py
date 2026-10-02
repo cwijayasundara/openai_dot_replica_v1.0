@@ -192,6 +192,33 @@ async def _read_sse_until(app: object, path: str, worker: Worker, needle: str) -
     return b"".join(chunks).decode()
 
 
+def test_the_postgres_event_stream_forwards_a_memory_event(pool: ConnectionPool) -> None:
+    from dot.surfaces.api import _pg_events
+
+    class Open:
+        stop = False
+
+        async def is_disconnected(self) -> bool:
+            return self.stop
+
+    async def run() -> dict[str, str]:
+        request = Open()
+        stream = _pg_events(os.environ["DOT_DATABASE_URL"], "dot-a", request)  # type: ignore[arg-type]
+        first = asyncio.ensure_future(anext(stream))
+        await asyncio.sleep(0.5)  # LISTEN is up before the notify
+        await asyncio.to_thread(
+            PgEventChannel(pool).publish, TurnEvent("dot-a", "memory", {"proposed": 1, "judged": [3]})
+        )
+        try:
+            return await asyncio.wait_for(first, timeout=5)
+        finally:
+            request.stop = True
+            await stream.aclose()
+
+    sent = asyncio.run(run())
+    assert sent["event"] == "memory" and json.loads(sent["data"])["detail"]["judged"] == [3]
+
+
 def test_tail_prints_a_live_event(pool: ConnectionPool) -> None:
     url = os.environ["DOT_DATABASE_URL"]
     event = TurnEvent("dot-a", "message", {"role": "assistant", "text": "tail me"})

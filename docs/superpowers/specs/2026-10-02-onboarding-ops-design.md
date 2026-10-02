@@ -95,7 +95,7 @@ It has one method per route the tools use. It has **no gate method**.
 | `list_sponsors()` | read | `[{id, name, contact}]`; `contact` is parsed from the dot's `/wiki/sponsors.md` table, null when missing |
 | `list_drops(sponsor_id=None)` | read | For each file under the drop root: `{sponsor_id, file_name, bytes, sha256, supported, reason, run_id, declined}`. `run_id` comes from matching `sha256` with a run's `upload_sha`. `declined` is true when this dot has a rejected `start_run` approval for the same `sponsor_id`, `file_name` and `sha256`. Sponsor folders not registered in the workbench are reported as `reason: "unknown sponsor"`. |
 | `list_runs(sponsor_id=None)` | read | `[{run_id, sponsor_id, status, upload_name, age_hours}]`. `status` is the record's: `scoping` until rejected or locked. |
-| `get_run(run_id)` | read | `{run_id, sponsor_id, phase, status, gate, gate_message, blocked_reasons, brief_questions, error, job_error, working, age_hours}`, compact. `status` is the live graph status; `age_hours` comes from the nested `record.created_at`; messages and errors are clipped to 300 characters. |
+| `get_run(run_id)` | read | `{run_id, sponsor_id, phase, status, gate, gate_message, blocked_reasons, brief_questions, error, job_error, working, age_hours}`, compact. `status` is the live graph status; `age_hours` comes from the nested `record.created_at`; brief question text and options, `gate_message`, `blocked_reasons`, `error` and `job_error` come as untrusted-data envelopes clipped to 300 characters. File names in `list_drops` and `list_runs` are enveloped the same way. |
 | `start_run(sponsor_id, file_name, sha256)` | write | See below. |
 
 `start_run` does these steps in code:

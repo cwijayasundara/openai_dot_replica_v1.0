@@ -60,8 +60,17 @@ The `onboarding-ops` pack watches a local drop folder and operates the recon wor
 
    Sponsors `sponsor-a` and `sponsor-b` are seeded by default.
    The script needs `OPENAI_API_KEY` in the workbench's own `.env`. Without `--db`, its runs are kept in memory and lost when it stops.
-2. **Point the dot at it.** In `.env`, set `DOT_RECON_URL=http://host.docker.internal:8100`. If the workbench needs a token, add `"cred:recon"` to `DOT_CREDENTIAL_BINDINGS`. `DOT_RECON_DROP_ROOT` is set by compose; leave it empty in `.env`. `host.docker.internal` resolves on Docker Desktop (macOS and Windows). On Linux, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the `api` and `worker` services, or use the host's IP.
-3. **Rebuild the backend** so the containers pick up the settings: `docker compose up -d --build api worker scheduler` (step 2 above).
+2. **Point the dot at it.** In `.env`, set `DOT_RECON_URL=http://host.docker.internal:8100`. `DOT_RECON_DROP_ROOT` is set by compose; leave it empty in `.env`.
+
+   If the workbench requires a token (`ONB_API_TOKEN` in its `.env`), bind it as a credential. Setting `DOT_CREDENTIAL_BINDINGS` replaces the default map, so keep the existing entries and add the recon one, then set the token itself:
+
+   ```bash
+   DOT_CREDENTIAL_BINDINGS={"cred:smtp":"DOT_SMTP_CREDENTIAL","cred:slack-bot":"DOT_SLACK_BOT_TOKEN","cred:recon":"DOT_RECON_TOKEN"}
+   DOT_RECON_TOKEN=<the workbench's ONB_API_TOKEN>
+   ```
+
+   `host.docker.internal` resolves on Docker Desktop (macOS and Windows). On Linux, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the `api` and `worker` services, or use the host's IP. The workbench must also listen on `0.0.0.0`, because host-gateway traffic does not arrive on loopback. `scripts/start-backend.sh` binds `127.0.0.1` and has no host option, so on Linux run its final `uvicorn` command yourself with `--host 0.0.0.0`, in the environment the script sets up, and keep port 8100 closed to other machines.
+3. **Rebuild the backend** so the containers pick up the settings: `docker compose up -d --build api worker scheduler`.
 4. **Create the dot.** In the web UI, choose `onboarding-ops` in the Pack select and press Create dot.
 5. **Drop a file** into a sponsor folder, creating it if needed. Compose mounts `./var/drops` read-only into `api` and `worker`:
 

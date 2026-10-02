@@ -110,7 +110,8 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         )
         fire("intake-sweep", sweep, datetime(2026, 10, 5, 9, 0, tzinfo=UTC))
         [drop] = _results(sweep)["list_drops"]["files"]
-        assert (drop["sponsor_id"], drop["file_name"], drop["sha256"]) == ("sponsor-a", "affiliates.csv", SHA)
+        assert (drop["sponsor_id"], drop["file_name"]["text"], drop["sha256"]) == ("sponsor-a", "affiliates.csv", SHA)
+        assert drop["file_name"]["marker"] == "untrusted-data"
         assert drop["supported"] and drop["run_id"] is None and not drop["declined"]
         [intake_finding] = findings("intake-sweep")
         assert intake_finding.status == OPEN
@@ -188,7 +189,8 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         assert [(r["run_id"], r["status"]) for r in sweep_results["list_runs"]["runs"]] == [(run_id, "scoping")]
         assert (sweep_results["get_run"]["status"], sweep_results["get_run"]["gate"]) == ("awaiting_brief", "brief")
         assert sweep_results["get_run"]["age_hours"] is not None
-        assert [q["text"] for q in sweep_results["get_run"]["brief_questions"]] == ["Which country is the home market?"]
+        questions = sweep_results["get_run"]["brief_questions"]
+        assert [q["text"]["text"] for q in questions] == ["Which country is the home market?"]
         [status_finding] = findings("status-sweep")
         assert status_finding.status == OPEN and status_finding.title == f"Run {run_id} waiting at brief"
 

@@ -225,6 +225,15 @@ def test_pg_event_channel_notifies_listeners(pool: ConnectionPool) -> None:
     assert body == {"dot_id": "dot-a", "kind": "error", "detail": {"error": "model down"}}
 
 
+def test_the_learning_lane_does_not_claim_a_chat_row(pool: ConnectionPool, repos: Repositories) -> None:
+    _seed(repos)
+    enqueue(repos, "dot-a", "web", {"text": "hello"}, "chat")
+    learning = Worker(pool, repos, InMemoryEventChannel(), lambda *a: None, lane="learning")
+
+    assert learning.run_once() is False
+    assert _inbox(pool, "dot-a")[0]["done_at"] is None
+
+
 def test_reflection_runs_on_the_learning_lane_and_never_delays_another_dot(
     pool: ConnectionPool, repos: Repositories
 ) -> None:

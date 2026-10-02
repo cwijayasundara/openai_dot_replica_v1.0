@@ -379,6 +379,27 @@ def test_the_correct_shortcut_refuses_unknown_messages_and_outsiders(rig: Rig) -
     assert rig.slack.made("chat.postMessage") == []
 
 
+def test_an_outsider_gets_a_notice_instead_of_the_correction_modal(rig: Rig) -> None:
+    rig.app = _correcting_app(rig, lambda *a: None)
+    rig.send(shortcut("dot_correct", "D1", _posted_reply(rig), OTHER))
+
+    assert rig.slack.made("views.open") == []
+    assert rig.slack.made("chat.postEphemeral")[-1]["text"] == "Only the dot's owner or an approver can correct it."
+
+
+def test_a_slack_error_after_the_shortcut_ack_is_logged_not_raised(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    rig.app = _correcting_app(rig, lambda *a: None)
+    rig.slack.failures["chat.postEphemeral"] = ["channel_not_found"]
+    rig.send(shortcut("dot_correct", "D1", "9.9", OWNER))  # unknown message: the notice itself fails
+
+    rig.slack.failures["views.open"] = ["expired_trigger_id"]
+    rig.send(shortcut("dot_correct", "D1", _posted_reply(rig), OWNER))
+
+    assert rig.slack.made("chat.postEphemeral") != [] and rig.slack.made("views.open") != []
+    warnings = [r.getMessage() for r in caplog.records if r.name == "dot.channels.slack"]
+    assert [w for w in warnings if "channel_not_found" in w] and [w for w in warnings if "expired_trigger_id" in w]
+
+
 @pytest.mark.parametrize(
     ("raised", "expected"),
     [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import threading
 from collections.abc import Callable, Sequence
@@ -41,6 +42,8 @@ from dot.runtime.router import CHANNEL_KEY, latest_channel, message_detail, rend
 from dot.runtime.turns import EventChannel, PgEventChannel, TurnEvent, publish_graph_update
 from dot.safety.approvals import persist_interrupts, resume_command
 from dot.tools.native.deps import ToolDeps
+
+log = logging.getLogger(__name__)
 
 # How long to sleep when the inbox has nothing this worker can claim.
 _IDLE_WAIT_S = 0.2
@@ -337,6 +340,11 @@ def _serve_lane(
         while not stop.is_set():
             if not worker.run_once():
                 stop.wait(_IDLE_WAIT_S)
+    except Exception:
+        # A lane that dies alone leaves the worker half alive; stop the other lane so a supervisor restarts it.
+        log.exception("the %s lane failed", lane)
+        stop.set()
+        raise
     finally:
         runtime.close()
 

@@ -34,8 +34,6 @@ whether the replay gate needs repeated runs.
   because reflection and the gate run on the separate learning lane.
 - The correction lookup fetches up to 2000 full checkpoints, so cost grows
   with thread history; slow on long threads for both the web route and Slack.
-- If the learning-lane thread dies on an unexpected exception, reflection
-  stops for all dots until the worker restarts.
 - Slack: "Correct this" on a non-dot message in a channel the bot isn't in
   gets no notice; replies posted before message ids were recorded can't be
   corrected from Slack.

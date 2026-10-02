@@ -230,6 +230,10 @@ def reflect(
         else:
             kept.append(proposal)
     for proposal in _merge_creates(kept, current):
+        # Merging can rebuild text a human undid from pieces that each passed the check above.
+        if (proposal.path, proposal.replace.strip()) in undone:
+            dropped.append(Dropped(proposal.path, "a human undid this edit"))
+            continue
         if len(edits) == max_edits:
             dropped.append(Dropped(proposal.path, f"over the cap of {max_edits} edits"))
             continue

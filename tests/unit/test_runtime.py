@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -9,6 +10,7 @@ from typing import Any, cast
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+import dot.runtime.worker as worker_module
 from dot.assembly import build_dot_agent, build_graph_runtime
 from dot.config import Settings
 from dot.packs.loader import REPO_ROOT, load_pack, seed_store
@@ -117,3 +119,29 @@ def test_agent_turn_uses_the_dot_thread(tmp_path: Path) -> None:
         "message",
         {"role": "assistant", "text": "Here is the answer.", "channel": {"source": "web", "inbox_id": 1}},
     )
+
+
+def test_a_lane_that_fails_stops_the_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[bool] = []
+
+    class StubRuntime:
+        def close(self) -> None:
+            closed.append(True)
+
+    class FailingWorker:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def run_once(self) -> bool:
+            raise RuntimeError("database went away")
+
+    monkeypatch.setattr(worker_module, "build_graph_runtime", lambda settings: StubRuntime())
+    monkeypatch.setattr(worker_module, "Worker", FailingWorker)
+    monkeypatch.setattr(worker_module, "_events", lambda pool: None)
+    monkeypatch.setattr(worker_module, "_agent_runner", lambda settings, runtime: None)
+    stop = threading.Event()
+
+    with pytest.raises(RuntimeError, match="database went away"):
+        worker_module._serve_lane(Settings(), None, None, None, stop, "learning")  # type: ignore[arg-type]
+
+    assert stop.is_set() and closed == [True]

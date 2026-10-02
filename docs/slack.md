@@ -59,7 +59,6 @@ reflection reads.
   closes, and refused inline. Finding the message can take longer than Slack's
   three seconds, so the modal closes first and the outcome arrives as a DM from
   the app: saved, too old, not correctable here, or could not be saved.
-
 - **Who.** The dot's owner (their linked Slack id) or a Slack id in the pack's
   approvers plus `DOT_PACK_APPROVERS`: the same rule as the web and the same
   identity approval buttons use. The episode records the Slack user id.

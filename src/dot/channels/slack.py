@@ -36,7 +36,7 @@ from dot.channels.base import Inbound, accept
 from dot.channels.outbox import CardChange, Outbox, OutboxItem
 from dot.memory.episodes import CorrectionBody, CorrectionTooOld, record_correction
 from dot.middleware.redaction import Redactor
-from dot.persistence.db import ApprovalConflict, Dot, Episode, Json, NotFound, Repositories
+from dot.persistence.db import ApprovalConflict, Dot, Episode, Json, NotFound, Repositories, User
 from dot.safety.approvals import ReviewDecision, approvers, decide
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ _DECIDED = {"approve": "Approved", "edit": "Approved with edits", "reject": "Rej
 
 NOT_LINKED = "This Slack account is not linked to a dot. Ask an operator to run `dot link-slack`."
 NOT_OWNER = "Only this dot's owner can ask it to do things."
+NOT_PERMITTED = "Only the dot's owner or an approver can correct it."
 NOT_CORRECTABLE = 'This message can\'t be corrected here. Use "Correct this" in the web UI.'
 CORRECTION_SAVED = "Thanks. The dot will learn from this correction."
 CORRECTION_FAILED = "The correction could not be saved."
@@ -289,12 +290,24 @@ def build_app(
             conversation = str((body.get("channel") or {}).get("id", ""))
             ts = str((body.get("message") or {}).get("ts", ""))
             found = outbox.find_post(CHANNEL, conversation, ts)
-            if found is None:
-                _ephemeral(client, body, NOT_CORRECTABLE)
-                return
-            dot_id, message_id = found
-            # trigger_id is valid for three seconds: open the modal before anything slow.
-            client.views_open(trigger_id=body["trigger_id"], view=_correct_view(dot_id, message_id))
+            try:
+                if found is None:
+                    _ephemeral(client, body, NOT_CORRECTABLE)
+                    return
+                dot_id, message_id = found
+                try:
+                    dot = repos.get_dot(dot_id)
+                    owner = repos.get_user(dot.owner_user_id)
+                except NotFound:
+                    _ephemeral(client, body, NOT_CORRECTABLE)
+                    return
+                if not _may_correct(str(body["user"]["id"]), dot, owner):
+                    _ephemeral(client, body, NOT_PERMITTED)
+                    return
+                # trigger_id is valid for three seconds: open the modal before anything slow.
+                client.views_open(trigger_id=body["trigger_id"], view=_correct_view(dot_id, message_id))
+            except SlackApiError as exc:
+                log.warning("could not open the correction modal: %s", _slack_error(exc))
 
         @app.view("dot_correct")
         def on_correct_submit(ack: Ack, body: Json, view: Json) -> None:
@@ -307,9 +320,8 @@ def build_app(
             except NotFound:
                 ack(response_action="errors", errors={"text": "This dot no longer exists."})
                 return
-            # The same rule as the web's viewer(), in the Slack identity decide() uses.
-            if user != owner.slack_user_id and user not in approvers(dot.pack_name):
-                ack(response_action="errors", errors={"text": "Only the dot's owner or an approver can correct it."})
+            if not _may_correct(user, dot, owner):
+                ack(response_action="errors", errors={"text": NOT_PERMITTED})
                 return
             try:
                 correction = CorrectionBody(message_id=str(target["message_id"]), text=text)
@@ -396,6 +408,11 @@ def _direct(client: WebClient, user: str, text: str) -> None:
         client.chat_postMessage(channel=user, text=text)
     except SlackApiError as exc:
         log.warning("could not DM %s: %s", user, _slack_error(exc))
+
+
+def _may_correct(user: str, dot: Dot, owner: User) -> bool:
+    """The same rule as the web's viewer(), in the Slack identity decide() uses."""
+    return user == owner.slack_user_id or user in approvers(dot.pack_name)
 
 
 def _ephemeral(client: WebClient, body: Json, text: str) -> None:

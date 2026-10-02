@@ -209,6 +209,28 @@ def test_an_edit_a_human_undid_is_not_proposed_again(tmp_path: Path) -> None:
     assert data["undone"] == [{"path": AGENTS_PATH, "replace": "- Keep emails short."}]
 
 
+@pytest.mark.parametrize("status", ["rolled_back", "discarded"])
+def test_a_merged_create_a_human_undid_is_not_proposed_again(tmp_path: Path, status: str) -> None:
+    rig = Rig(tmp_path, [])
+    ids = [e.id for e in rig.shortened()]
+    undone = {"path": AGENTS_PATH, "find": "", "replace": "- Keep emails short.\n- Sign as Ada.\n", "rationale": "r"}
+    rig.repos.insert_memory_version(MemoryVersion(0, rig.dot.dot_id, NOW, "", ids, status, undone))
+    rig.model.structured_script = [
+        {
+            "edits": [
+                edit(AGENTS_PATH, "", "- Keep emails short.", ids),
+                edit(AGENTS_PATH, "", "- Sign as Ada.\n", ids),
+            ]
+        }
+    ]
+
+    result = rig.reflect()
+
+    assert result.edits == ()
+    assert [d.reason for d in result.dropped] == ["a human undid this edit"]
+    assert [v for v in rig.repos.list_memory_versions(rig.dot.dot_id) if v.status == "proposed"] == []
+
+
 def test_edits_creating_the_same_file_are_merged_into_one(tmp_path: Path) -> None:
     rig = Rig(tmp_path, [])
     ids = [e.id for e in rig.shortened(3)]

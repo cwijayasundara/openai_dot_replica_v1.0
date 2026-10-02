@@ -28,6 +28,6 @@ schedules:
      prompt: "For each 'New file' finding, call start_run with its sponsor_id, file_name and sha256. Then reply with one line per file."}
   - {name: daily, kind: digest, cron: "45 8 * * 1-5", profile: digest, findings_from: [status-sweep],
      max_model_calls: 10, max_tokens: 80000,
-     prompt: "Send the morning onboarding digest: runs by phase, blockers with ages, stale runs. For each run waiting at the brief gate, draft an email to the sponsor's contact from /wiki/sponsors.md asking its brief questions."}
+     prompt: "Send the morning onboarding digest: runs by phase, blockers with ages, stale runs. For each run waiting at the brief gate, call list_sponsors and draft an email to that sponsor's contact asking its brief questions; if the contact is null, say so and draft nothing."}
   - {name: reflection, kind: reflection, cron: "0 2 * * *",
      prompt: "Learn how this user wants files triaged, runs reported and sponsor questions drafted."}

@@ -66,3 +66,5 @@ class ToolDeps:
     drop_root: Path | None = None
     # Files this dot was refused permission to start: (sponsor_id, file_name, sha256).
     recon_declined: Callable[[], frozenset[tuple[str, str, str]]] | None = None
+    # Reads one of this dot's wiki pages by path, such as "/wiki/sponsors.md". None when missing.
+    wiki_page: Callable[[str], str | None] | None = None

@@ -94,7 +94,10 @@ def test_drop_tools_need_a_drop_root(tmp_path: Path, fake: FakeRecon) -> None:
     assert _call(deps, "list_drops")["error"] == "the recon workbench is not configured"
     assert _call(deps, "list_sponsors") == {
         "ok": True,
-        "sponsors": [{"id": "sponsor-a", "name": "Sponsor A"}, {"id": "sponsor-b", "name": "Sponsor B"}],
+        "sponsors": [
+            {"id": "sponsor-a", "name": "Sponsor A", "contact": None},
+            {"id": "sponsor-b", "name": "Sponsor B", "contact": None},
+        ],
     }
 
 
@@ -481,3 +484,66 @@ def test_start_run_refuses_a_fifo(tmp_path: Path, fake: FakeRecon) -> None:
     os.mkfifo(deps.drop_root / "sponsor-a" / "pipe.csv")
     result = _call(deps, "start_run", sponsor_id="sponsor-a", file_name="pipe.csv", sha256=SHA)
     assert result == {"ok": False, "error": "the file could not be read"}
+
+
+SPONSORS_PAGE = """# Sponsors
+
+| id | name | contact |
+|---|---|---|
+| sponsor-a | Sponsor A | ops@sponsor-a.example |
+| sponsor-b | Sponsor B |
+"""
+
+
+def test_list_sponsors_takes_contacts_from_the_wiki(tmp_path: Path, fake: FakeRecon) -> None:
+    pages = {"/wiki/sponsors.md": SPONSORS_PAGE}
+    deps = replace(_deps(tmp_path, fake), wiki_page=pages.get)
+    assert _call(deps, "list_sponsors")["sponsors"] == [
+        {"id": "sponsor-a", "name": "Sponsor A", "contact": "ops@sponsor-a.example"},
+        # A short row gives no contact for that sponsor only.
+        {"id": "sponsor-b", "name": "Sponsor B", "contact": None},
+    ]
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        None,
+        "# Sponsors\n\nNo table yet.\n",
+        "| id | name |\n|---|---|\n| sponsor-a | Sponsor A |\n",
+        "| id | name | contact |\n|---|---|---|\n| sponsor-a | Sponsor A |   |\n",
+    ],
+)
+def test_list_sponsors_without_a_contact_says_none(tmp_path: Path, fake: FakeRecon, page: str | None) -> None:
+    deps = replace(_deps(tmp_path, fake), wiki_page=lambda _path: page)
+    sponsors = _call(deps, "list_sponsors")["sponsors"]
+    assert [s["contact"] for s in sponsors] == [None, None]
+
+
+def test_list_sponsors_survives_a_failing_wiki_read(
+    tmp_path: Path, fake: FakeRecon, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(_path: str) -> str | None:
+        raise RuntimeError("store at db-secret-host is down")
+
+    deps = replace(_deps(tmp_path, fake), wiki_page=broken)
+    with caplog.at_level("WARNING"):
+        raw = recon.build_list_sponsors(deps).invoke({})
+    assert "db-secret-host" not in raw
+    assert [s["contact"] for s in json.loads(raw)["sponsors"]] == [None, None]
+
+
+def test_assembly_wires_the_wiki_from_the_dots_store(tmp_path: Path, fake: FakeRecon) -> None:
+    runtime = GraphRuntime(MemorySaver(), InMemoryStore())
+    seed_store(load_pack(REPO_ROOT / "packs/onboarding-ops"), runtime.store, "dot-1")
+    settings = Settings(_env_file=None, object_root=str(tmp_path))  # type: ignore[call-arg]
+    dot = Dot("dot-1", "owner", "onboarding-ops", "1", "thread-1", "active", datetime.now(UTC))
+    base = ToolDeps(ArtifactStore(tmp_path), recon=fake.client(), drop_root=tmp_path)
+
+    deps = _tool_deps(dot, settings, runtime, base)
+    assert deps.wiki_page is not None
+    page = deps.wiki_page("/wiki/sponsors.md")
+    assert page is not None and "ops@sponsor-a.example" in page
+    assert deps.wiki_page("/wiki/missing.md") is None
+    contacts = {s["id"]: s["contact"] for s in _call(deps, "list_sponsors")["sponsors"]}
+    assert contacts == {"sponsor-a": "ops@sponsor-a.example", "sponsor-b": "ops@sponsor-b.example"}

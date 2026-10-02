@@ -26,6 +26,7 @@ MAX_BYTES = 20 * 1024 * 1024
 SPONSOR_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 NOT_CONFIGURED = "the recon workbench is not configured"
+SPONSORS_PAGE = "/wiki/sponsors.md"
 _CHUNK = 1024 * 1024
 # O_NOFOLLOW refuses a symlink swapped in after the is_symlink check; O_NONBLOCK keeps a
 # FIFO from hanging the open. Only regular files are read.
@@ -152,16 +153,63 @@ def _drop_entry(
     }
 
 
+def _cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def parse_contacts(page: str) -> dict[str, str]:
+    """Sponsor id to contact from the first ``| id | ... | contact |`` table. Bad rows are skipped."""
+    columns: list[str] | None = None
+    contacts: dict[str, str] = {}
+    for line in page.splitlines():
+        if not line.strip().startswith("|"):
+            if columns is not None:
+                break
+            continue
+        cells = _cells(line)
+        if columns is None:
+            lowered = [cell.lower() for cell in cells]
+            if "id" in lowered and "contact" in lowered:
+                columns = lowered
+            continue
+        if all(re.fullmatch(r":?-+:?", cell) for cell in cells):
+            continue
+        if len(cells) != len(columns):
+            continue
+        row = dict(zip(columns, cells, strict=True))
+        if row["id"] and row["contact"]:
+            contacts[row["id"]] = row["contact"]
+    return contacts
+
+
+def _contacts(deps: ToolDeps) -> dict[str, str]:
+    if deps.wiki_page is None:
+        return {}
+    try:
+        page = deps.wiki_page(SPONSORS_PAGE)
+    except Exception:
+        # The read goes to the dot's store; its error text never reaches the model.
+        log.warning("reading %s failed; sponsors are listed without contacts", SPONSORS_PAGE, exc_info=True)
+        return {}
+    return parse_contacts(page) if page else {}
+
+
 def build_list_sponsors(deps: ToolDeps) -> BaseTool:
     def list_sponsors() -> str:
-        """List the sponsors registered in the recon workbench, as id and name."""
+        """List the sponsors registered in the recon workbench, as id, name and the contact
+        address from /wiki/sponsors.md (null when the wiki has none)."""
         if deps.recon is None:
             return fail(NOT_CONFIGURED)
         try:
             sponsors = deps.recon.sponsors()
         except ReconError as exc:
             return fail(str(exc))
-        return ok(sponsors=[{"id": s.get("id"), "name": s.get("name")} for s in sponsors])
+        contacts = _contacts(deps)
+        return ok(
+            sponsors=[
+                {"id": s.get("id"), "name": s.get("name"), "contact": contacts.get(str(s.get("id")))} for s in sponsors
+            ]
+        )
 
     return StructuredTool.from_function(list_sponsors, name="list_sponsors")
 

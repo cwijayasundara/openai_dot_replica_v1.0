@@ -60,7 +60,7 @@ The workbench API is in `src/onboarding_agent/surfaces/api.py` in that repo.
    - blockers (gate waits and errors) with their ages;
    - stale runs.
 
-   For each run waiting at a `brief` gate, it calls `draft_email` to the sponsor's contact from the wiki. The draft asks the brief questions in plain language, with the options. Sending stays a separate, approved `send_email`.
+   For each run waiting at a `brief` gate, it calls `draft_email` to the sponsor's contact, which `list_sponsors` reads from the dot's `/wiki/sponsors.md`. The draft asks the brief questions in plain language, with the options. Sending stays a separate, approved `send_email`.
 5. **`reflection`** runs nightly at 02:00, as in `research-analyst`.
 
 ## Engine changes
@@ -90,7 +90,7 @@ It has one method per route the tools use. It has **no gate method**.
 
 | Tool | Effect | Behaviour |
 |---|---|---|
-| `list_sponsors()` | read | `[{id, name}]` |
+| `list_sponsors()` | read | `[{id, name, contact}]`; `contact` is parsed from the dot's `/wiki/sponsors.md` table, null when missing |
 | `list_drops(sponsor_id=None)` | read | For each file under the drop root: `{sponsor_id, file_name, bytes, sha256, supported, reason, run_id, declined}`. `run_id` comes from matching `sha256` with a run's `upload_sha`. `declined` is true when this dot has a rejected `start_run` approval for the same `sponsor_id`, `file_name` and `sha256`. Sponsor folders not registered in the workbench are reported as `reason: "unknown sponsor"`. |
 | `list_runs(sponsor_id=None)` | read | `[{run_id, sponsor_id, status, upload_name, age_hours, updated_hours}]` |
 | `get_run(run_id)` | read | `{run_id, sponsor_id, phase, status, gate, gate_message, blocked_reasons, brief_questions, error, working, age_hours}`, compact. |

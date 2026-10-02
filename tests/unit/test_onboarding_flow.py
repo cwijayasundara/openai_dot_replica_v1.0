@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from dot.assembly import build_graph_runtime
 from dot.channels.base import DeliveringEventChannel
@@ -173,24 +173,33 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         [status_finding] = findings("status-sweep")
         assert status_finding.status == OPEN and status_finding.title == f"Run {run_id} waiting at brief"
 
-        # 5. The daily digest drafts the sponsor email without an approval and replies.
+        # 5. The daily digest takes the sponsor's contact from list_sponsors and drafts the email.
+        def draft_to_contact(messages: list[BaseMessage]) -> AIMessage:
+            listed = next(m for m in reversed(messages) if isinstance(m, ToolMessage) and m.name == "list_sponsors")
+            contact = {s["id"]: s["contact"] for s in json.loads(str(listed.content))["sponsors"]}["sponsor-a"]
+            return tools(
+                call(
+                    "draft_email",
+                    to=contact,
+                    subject=f"Brief questions for {run_id}",
+                    body="Which country is the home market?",
+                )
+            )
+
         daily = ScriptedChatModel(
             script=[
-                tools(call("get_run", run_id=run_id)),
-                tools(
-                    call(
-                        "draft_email",
-                        to="ops@sponsor-a.example",
-                        subject=f"Brief questions for {run_id}",
-                        body="Which country is the home market?",
-                    )
-                ),
+                tools(call("get_run", run_id=run_id), call("list_sponsors")),
+                draft_to_contact,
                 say(f"Onboarding digest: {run_id} (sponsor-a) waits at the brief gate; a sponsor email is drafted."),
             ]
         )
         fire("daily", daily, datetime(2026, 10, 6, 8, 45, tzinfo=UTC))
-        draft = _results(daily)["draft_email"]
-        assert draft["ok"] is True and draft["to"] == "ops@sponsor-a.example" and draft["artifact_id"]
+        daily_results = _results(daily)
+        # The contact comes from the dot's /wiki/sponsors.md; the workbench knows none.
+        [contact] = [s["contact"] for s in daily_results["list_sponsors"]["sponsors"] if s["id"] == "sponsor-a"]
+        assert contact is not None and "contact" not in json.dumps(fake.sponsors)
+        draft = daily_results["draft_email"]
+        assert draft["ok"] is True and draft["to"] == contact and draft["artifact_id"]
         assert repos.list_dot_approvals(dot.dot_id, "pending") == []
         assert [c.tool for c in repos.approvals.values()] == ["start_run"]
         [(kind, reply)] = posted()

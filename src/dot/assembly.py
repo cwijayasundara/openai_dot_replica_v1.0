@@ -14,6 +14,7 @@ from typing import Any
 
 from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, create_deep_agent, register_harness_profile
 from deepagents.backends import CompositeBackend, StoreBackend
+from deepagents.backends.utils import file_data_to_string
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.subagents import SubAgent
 from langchain.agents.middleware import (
@@ -346,7 +347,20 @@ def _tool_deps(dot: Dot, settings: Settings, runtime: GraphRuntime, deps: ToolDe
         repos = runtime.audit_repositories
         dot_id = dot.dot_id
         declined = (lambda: _declined(repos, dot_id)) if repos is not None else frozenset
-    return replace(deps, credentials=broker, recon=recon, recon_declined=declined)
+    wiki_page = deps.wiki_page or _wiki_reader(runtime.store, dot.dot_id)
+    return replace(deps, credentials=broker, recon=recon, recon_declined=declined, wiki_page=wiki_page)
+
+
+def _wiki_reader(store: BaseStore, dot_id: str) -> Callable[[str], str | None]:
+    """Read one of the dot's own wiki pages, as the supervisor sees it under ``/wiki/``."""
+
+    def read(path: str) -> str | None:
+        if not path.startswith("/wiki/"):
+            return None
+        item = store.get(wiki_namespace(dot_id), path.removeprefix("/wiki"))
+        return file_data_to_string(item.value) if item is not None else None  # type: ignore[arg-type]
+
+    return read
 
 
 def _declined(repos: Repositories, dot_id: str) -> frozenset[tuple[str, str, str]]:

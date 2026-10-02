@@ -31,11 +31,13 @@ schedules:
   returned instead of being duplicated. `record_finding` writes only to the
   dot's own inbox, so it is a `read` effect.
 - **The digest.** It is skipped when nothing is open. Its request carries the
-  open findings (up to 30, highest score first) as untrusted data. The
+  open findings (up to 30, highest score first) as untrusted data. A digest
+  with `findings_from: [sweep, ...]` is shown only those sweeps' findings, so
+  two digests on one dot do not consume each other's. The
   Guardian's objective is the schedule's prompt, never the findings' text. The
   reply goes to the bound Slack channel (`dot link-slack --channel`) as a new
   message. With no channel bound, it stays in the web thread. After a turn
-  that ends in a reply, exactly the findings it was shown are marked
+  that ends in a reply, or waits at an approval, exactly the findings it was shown are marked
   `reported`, so the next digest does not repeat them. While the dot's
   thread waits for an approval, the digest fails with "thread is paused for
   human review". Its findings stay open and the next firing tries again.

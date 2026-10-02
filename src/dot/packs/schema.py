@@ -103,6 +103,7 @@ class Schedule(BaseModel):
     kind: Literal["sweep", "digest", "reflection"] = "sweep"
     max_model_calls: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
+    findings_from: list[str] | None = None
 
     @model_validator(mode="after")
     def check_profile(self) -> Schedule:
@@ -112,6 +113,8 @@ class Schedule(BaseModel):
             raise ValueError(f"a {self.kind} schedule needs a profile")
         if self.kind == "reflection" and (self.max_model_calls is not None or self.max_tokens is not None):
             raise ValueError("a reflection makes one model call, bounded by its episode cap")
+        if self.findings_from is not None and self.kind != "digest":
+            raise ValueError("only a digest takes findings_from")
         return self
 
     @property

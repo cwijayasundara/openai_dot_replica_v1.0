@@ -17,7 +17,7 @@ from dot.config import Settings
 from dot.jobs.store import MemoryJobStore
 from dot.packs.loader import REPO_ROOT, load_pack, seed_store
 from dot.persistence.db import ChannelBinding, Dot, Finding, InboxMessage, MemoryRepositories, User
-from dot.proactive.findings import OPEN, REPORTED
+from dot.proactive.findings import OPEN, REPORTED, open_for_digest
 from dot.runtime.turns import InMemoryEventChannel
 from dot.runtime.worker import run_agent_turn
 from dot.tools.artifacts import ArtifactStore
@@ -93,9 +93,9 @@ class Rig:
         state = agent.get_state({"configurable": {"thread_id": thread_id}})
         return list(state.values.get("messages", []))
 
-    def finding(self, title: str, score: float = 0.5) -> Finding:
+    def finding(self, title: str, score: float = 0.5, schedule: str = "sweep") -> Finding:
         return self.repos.insert_finding(
-            Finding(0, self.dot.dot_id, "sweep", title, {"summary": title}, score, OPEN, WHEN)
+            Finding(0, self.dot.dot_id, schedule, title, {"summary": title}, score, OPEN, WHEN)
         )
 
 
@@ -293,3 +293,27 @@ def test_findings_tools_are_not_offered_to_chat(rig: Rig) -> None:
         rig.dot, "chat", [chat], rig.events, settings=rig.settings, runtime=rig.runtime, model=model, deps=rig.deps
     )
     assert {"record_finding", "list_findings"}.isdisjoint(model.offered[0])
+
+
+def test_a_digest_with_findings_from_sees_only_those_sweeps(rig: Rig) -> None:
+    rig.finding("From the sweep", schedule="sweep")
+    rig.finding("From elsewhere", schedule="other")
+    titles = [f.title for f in open_for_digest(rig.repos, rig.dot.dot_id, ["sweep"])]
+    assert titles == ["From the sweep"]
+    assert len(open_for_digest(rig.repos, rig.dot.dot_id)) == 2  # no filter: every open finding
+
+
+def test_a_digest_that_ends_at_an_approval_marks_its_snapshot_reported(rig: Rig) -> None:
+    rig.finding("Send Bob the filing")
+    # The shipped digest profile drafts but cannot send; give it send_email for this test only.
+    loaded = load_pack(REPO_ROOT / "packs" / "research-analyst")
+    digest = loaded.pack.profiles["digest"].model_copy(update={"tools": ["send_email"], "effects": None})
+    patched = loaded.model_copy(
+        update={"pack": loaded.pack.model_copy(update={"profiles": {**loaded.pack.profiles, "digest": digest}})}
+    )
+    model = ScriptedChatModel(script=[tools(call("send_email", to="b@example.com", subject="s", body="b"))])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dot.assembly.load_pack", lambda _path: patched)
+        rig.run("digest", model)
+    assert rig.repos.list_dot_approvals(rig.dot.dot_id, "pending")
+    assert [f.status for f in rig.repos.list_findings(rig.dot.dot_id)] == [REPORTED]

@@ -114,6 +114,39 @@ def test_a_digest_may_draft(tmp_path: Path) -> None:
     assert load_pack(root).pack.schedule("digest").kind == "digest"
 
 
+def _digest(**values: object) -> dict[str, object]:
+    return {"name": "digest", "kind": "digest", "cron": "45 8 * * 1-5", "profile": "digest", "prompt": "D.", **values}
+
+
+def _findings_from_pack(root: Path, schedules: list[dict[str, object]]) -> Path:
+    return _write_pack(
+        root,
+        native=["web_search"],
+        profiles={"sweep": {"effects": ["read"]}, "digest": {"effects": ["read", "draft"]}},
+        schedules=schedules,
+    )
+
+
+def test_a_digest_may_name_the_sweeps_it_reports(tmp_path: Path) -> None:
+    root = _findings_from_pack(tmp_path / "research-analyst", [_sweep(), _digest(findings_from=["sweep"])])
+    assert load_pack(root).pack.schedule("digest").findings_from == ["sweep"]
+
+
+def test_findings_from_must_name_a_sweep_of_the_pack(tmp_path: Path) -> None:
+    root = _findings_from_pack(tmp_path / "a", [_sweep(), _digest(findings_from=["digest"])])
+    with pytest.raises(PackLoadError, match="findings_from 'digest' is not a sweep of this pack"):
+        load_pack(root)
+    root = _findings_from_pack(tmp_path / "b", [_sweep(), _digest(findings_from=["nope"])])
+    with pytest.raises(PackLoadError, match="findings_from 'nope' is not a sweep of this pack"):
+        load_pack(root)
+
+
+def test_only_a_digest_takes_findings_from(tmp_path: Path) -> None:
+    root = _findings_from_pack(tmp_path / "research-analyst", [_sweep(findings_from=["sweep"])])
+    with pytest.raises(PackLoadError, match="only a digest takes findings_from"):
+        load_pack(root)
+
+
 def _write_pack(
     root: Path,
     *,

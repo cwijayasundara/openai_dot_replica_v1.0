@@ -5,7 +5,7 @@
 - A digest runs on the dot's thread. It is skipped when nothing is open. Its
   request carries a snapshot of the open findings, and its reply goes to the
   dot's default channel: the bound Slack channel, else the web thread only.
-  After a turn that ends in a reply, exactly that snapshot is marked reported.
+  After a turn that ends in a reply, or waits at an approval, exactly that snapshot is marked reported.
 - Both run under the schedule's budget. A run stopped by it leaves a finding.
 """
 
@@ -60,7 +60,7 @@ def prepare(repos: Repositories, dot: Dot, message: InboxMessage, settings: Sett
         schedule.max_tokens or settings.schedule_max_tokens,
     )
     if schedule.kind == "digest":
-        findings = open_for_digest(repos, dot.dot_id)
+        findings = open_for_digest(repos, dot.dot_id, schedule.findings_from)
         if not findings:
             return None
         return ScheduledRun(schedule, budget, dot.thread_id, tuple(findings))
@@ -97,7 +97,8 @@ def finish(repos: Repositories, dot: Dot, run: ScheduledRun, messages: Sequence[
     if run.budget.stopped:
         record_budget_stop(repos, dot.dot_id, run.schedule.name, run.budget.usage())
         return
-    if run.schedule.kind == "digest" and _replied(messages):
+    if run.schedule.kind == "digest" and (_replied(messages) or _awaiting_approval(messages)):
+        # A turn paused at an approval acted on its findings; reporting them again would raise a second card.
         mark_reported(repos, run.findings)
 
 
@@ -117,3 +118,10 @@ def _replied(messages: Sequence[Any]) -> bool:
         return False
     last = messages[-1]
     return isinstance(last, AIMessage) and not last.tool_calls and bool(last.text.strip())
+
+
+def _awaiting_approval(messages: Sequence[Any]) -> bool:
+    if not messages:
+        return False
+    last = messages[-1]
+    return isinstance(last, AIMessage) and bool(last.tool_calls)

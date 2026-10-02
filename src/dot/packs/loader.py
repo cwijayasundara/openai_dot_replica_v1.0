@@ -225,6 +225,12 @@ def _check_schedules(pack: Pack, registry: ToolRegistry, mcp_tools: set[str], er
             cron_trigger(schedule.cron, UTC)
         except ValueError as exc:
             errors.append(f"schedule {schedule.name!r}: {exc}")
+    sweeps = {s.name for s in pack.schedules if s.kind == "sweep"}
+    for schedule in pack.schedules:
+        for name in schedule.findings_from or []:
+            if name not in sweeps:
+                errors.append(f"schedule {schedule.name!r}: findings_from {name!r} is not a sweep of this pack")
+    for schedule in pack.schedules:
         profile = pack.profiles.get(schedule.profile) if schedule.profile is not None else None
         if schedule.kind != "sweep" or profile is None:
             continue

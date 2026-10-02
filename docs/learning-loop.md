@@ -117,7 +117,10 @@ own messages wait for its lock, like any turn. A paused dot's reflection waits u
    - the new text contains no known secret;
    - an edited `SKILL.md` still parses with deepagents' own skill parser.
      That parser only warns on a name mismatch, but drops a skill whose
-     frontmatter is broken.
+     frontmatter is broken;
+   - it is not an edit a human undid: same path and same `replace` text as a
+     `rolled_back` or `discarded` version. The model also sees those as
+     `undone` data, but code enforces the rule.
 
    Edits past `DOT_REFLECTION_MAX_EDITS` are dropped.
 5. Writes each surviving edit as a `memory_versions` row with status

@@ -19,7 +19,7 @@ from dot.memory.reflection import AGENTS_PATH, MemoryFiles, run_reflection
 from dot.middleware.redaction import Redactor
 from dot.packs.loader import REPO_ROOT, load_pack
 from dot.packs.schema import REFLECTION_PROFILE, Schedule
-from dot.persistence.db import Dot, Episode, MemoryRepositories
+from dot.persistence.db import Dot, Episode, MemoryRepositories, MemoryVersion
 from dot.proactive.scheduler import trigger
 from dot.runtime.turns import InMemoryEventChannel
 from dot.runtime.worker import run_agent_turn
@@ -184,6 +184,29 @@ def test_each_check_drops_an_edit_with_its_reason(tmp_path: Path, proposal: Any,
     assert rig.repos.list_memory_versions(rig.dot.dot_id) == []
     # A run whose edits were all dropped still consumed its episodes.
     assert rig.cursor() == ids[-1]
+
+
+def test_an_edit_a_human_undid_is_not_proposed_again(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, [])
+    ids = [e.id for e in rig.shortened()]
+    undone = {"path": AGENTS_PATH, "find": "", "replace": "- Keep emails short.\n", "rationale": "r"}
+    rig.repos.insert_memory_version(MemoryVersion(0, rig.dot.dot_id, NOW, "", ids, "rolled_back", undone))
+    rig.model.structured_script = [
+        {
+            "edits": [
+                edit(AGENTS_PATH, "", "- Keep emails short.\n", ids),
+                edit(AGENTS_PATH, "", "- Sign as Ada.\n", ids),
+            ]
+        }
+    ]
+
+    result = rig.reflect()
+
+    assert [d.reason for d in result.dropped] == ["a human undid this edit"]
+    (proposed,) = [v for v in rig.repos.list_memory_versions(rig.dot.dot_id) if v.status == "proposed"]
+    assert proposed.detail["replace"] == "- Sign as Ada.\n"
+    data = json.loads(str(rig.model.structured_seen[0][1].content))
+    assert data["undone"] == [{"path": AGENTS_PATH, "replace": "- Keep emails short."}]
 
 
 def test_edits_past_the_cap_are_dropped(tmp_path: Path) -> None:

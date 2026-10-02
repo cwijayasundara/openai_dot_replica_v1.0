@@ -24,6 +24,10 @@ PROFILE_METADATA_KEY = "dot_profile"
 CORRECTION_SCAN_LIMIT = 2000
 
 
+class CorrectionTooOld(Exception):
+    """The message is on the thread but older than the checkpoints a correction scans."""
+
+
 class CorrectionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,9 +62,16 @@ class Unreplayable:
 
 
 def record_correction(repos: Repositories, graph: StateGraph, dot: Dot, user_id: str, body: CorrectionBody) -> Episode:
-    """Store a correction against one of the dot's own AI messages. NotFound when it is not one."""
+    """Store a correction against one of the dot's own AI messages.
+
+    NotFound when it is not one; CorrectionTooOld when it is, but past the scan window.
+    """
     found = _find_message(graph, dot.thread_id, body.message_id)
     if found is None:
+        state = graph.get_state({"configurable": {"thread_id": dot.thread_id}})
+        messages = state.values.get("messages", []) if isinstance(state.values, dict) else []
+        if any(isinstance(m, AIMessage) and m.id == body.message_id for m in messages):
+            raise CorrectionTooOld(body.message_id)
         raise NotFound("messages", body.message_id)
     checkpoint_id, values, metadata = found
     message = values["messages"][-1]

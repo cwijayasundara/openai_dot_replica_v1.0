@@ -227,3 +227,24 @@ def test_corrections_on_runs_without_a_recorded_profile_are_unreplayable(
     assert episode.proposal["profile"] is None
     point = replay_point(rig.repos, graph, rig.dot, episode)
     assert isinstance(point, Unreplayable) and point.reason == "profile unknown"
+
+
+def test_a_message_past_the_scan_window_is_too_old_not_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _rig(tmp_path, monkeypatch, [say("First."), say("Second."), say("Third.")])
+    for text in ("one", "two", "three"):
+        rig.turn(text)
+    first, *_ = rig.ai_messages()
+    # Three newest checkpoints all sit in the last turn, so the first message is outside the window.
+    monkeypatch.setattr("dot.memory.episodes.CORRECTION_SCAN_LIMIT", 3)
+    app = create_app(rig.settings, repos=rig.repos, runtime=rig.runtime, events=rig.events, model=rig.model)
+
+    @app.middleware("http")
+    async def trusted_identity(request: Request, call_next):  # type: ignore[no-untyped-def]
+        request.state.user_id = "owner"
+        return await call_next(request)
+
+    endpoint = f"/dots/{rig.dot.dot_id}/corrections"
+    with TestClient(app) as client:
+        old = client.post(endpoint, json={"message_id": first["id"], "text": "Shorter"})
+        assert old.status_code == 409 and "too old" in old.json()["detail"]
+        assert client.post(endpoint, json={"message_id": "nope", "text": "x"}).status_code == 404

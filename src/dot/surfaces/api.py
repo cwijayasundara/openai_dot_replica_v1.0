@@ -20,7 +20,7 @@ from sse_starlette.sse import EventSourceResponse
 from dot.assembly import GraphRuntime, build_dot_agent, build_graph_runtime
 from dot.config import Settings, get_settings
 from dot.jobs.store import JobStore, MemoryJobStore, PostgresJobStore
-from dot.memory.episodes import CorrectionBody, record_correction
+from dot.memory.episodes import CorrectionBody, CorrectionTooOld, record_correction
 from dot.memory.reflection import MemoryFiles
 from dot.memory.versions import accept_reviewed, discard, rollback
 from dot.packs.loader import REPO_ROOT, PackLoadError, load_pack
@@ -276,7 +276,10 @@ def create_app(
         dot = viewer(request, dot_id)  # refuses anonymous callers, so the principal is set
         # Building the agent does not invoke it; only its checkpointed history is read.
         graph = build_dot_agent(dot, "chat", settings=surface.settings, runtime=surface.runtime, model=surface.model)
-        episode = record_correction(surface.repos, graph, dot, str(principal(request)), body)
+        try:
+            episode = record_correction(surface.repos, graph, dot, str(principal(request)), body)
+        except CorrectionTooOld as exc:
+            raise HTTPException(409, "this message is too old to correct") from exc
         return {"episode_id": episode.id, "dot_id": dot_id}
 
     @app.get("/dots/{dot_id}/findings")

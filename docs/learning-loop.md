@@ -47,7 +47,8 @@ POST /dots/{dot_id}/corrections
   `human_action = "correction"`. `outcome` holds `{text, by}`. A message id
   with no such checkpoint gets 404. The search reads at most the newest 2000
   checkpoints (`CORRECTION_SCAN_LIMIT`), about 200 turns, so a message older
-  than that also gets 404.
+  than that gets 409 "too old to correct". An id that is not on the thread at
+  all gets 404.
 - The worker puts `dot_profile` in every run's config metadata, and LangGraph
   copies it onto each checkpoint. That is how a correction knows which
   profile made the message. Runs from before this change have no profile, so

@@ -223,10 +223,13 @@ def reflect(
     cited = {episode.id for episode in episodes}
     edits: list[MemoryEdit] = []
     dropped: list[Dropped] = []
+    kept: list[DraftEdit] = []
     for proposal in draft.edits:
         if (proposal.path, proposal.replace.strip()) in undone:
             dropped.append(Dropped(proposal.path, "a human undid this edit"))
-            continue
+        else:
+            kept.append(proposal)
+    for proposal in _merge_creates(kept, current):
         if len(edits) == max_edits:
             dropped.append(Dropped(proposal.path, f"over the cap of {max_edits} edits"))
             continue
@@ -236,6 +239,37 @@ def reflect(
         else:
             dropped.append(checked)
     return Reflection(tuple(episode.id for episode in episodes), tuple(edits), tuple(dropped))
+
+
+def _merge_creates(proposals: list[DraftEdit], current: dict[str, str]) -> list[DraftEdit]:
+    """Fold every edit that creates the same new file into one.
+
+    Only one edit can create a file; once it lands, the others no longer
+    apply and the gate rejects them as stale. Merged, they are judged together.
+    """
+    merged: list[DraftEdit] = []
+    creating: dict[str, int] = {}
+    for proposal in proposals:
+        if proposal.find or proposal.path in current:
+            merged.append(proposal)
+            continue
+        at = creating.get(proposal.path)
+        if at is None:
+            creating[proposal.path] = len(merged)
+            merged.append(proposal)
+            continue
+        first = merged[at]
+        text = first.replace if first.replace.endswith("\n") else first.replace + "\n"
+        # model_copy skips validation: the merged text may pass DraftEdit's per-field limit.
+        # check_edit still enforces the file's size cap.
+        merged[at] = first.model_copy(
+            update={
+                "replace": text + proposal.replace,
+                "rationale": f"{first.rationale}; {proposal.rationale}",
+                "episode_ids": sorted(set(first.episode_ids) | set(proposal.episode_ids)),
+            }
+        )
+    return merged
 
 
 def check_edit(

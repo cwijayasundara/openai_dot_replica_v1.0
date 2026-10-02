@@ -209,6 +209,27 @@ def test_an_edit_a_human_undid_is_not_proposed_again(tmp_path: Path) -> None:
     assert data["undone"] == [{"path": AGENTS_PATH, "replace": "- Keep emails short."}]
 
 
+def test_edits_creating_the_same_file_are_merged_into_one(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, [])
+    ids = [e.id for e in rig.shortened(3)]
+    rig.model.structured_script = [
+        {
+            "edits": [
+                edit(AGENTS_PATH, "", "- Keep emails short.", [ids[0]], "Short."),
+                edit(SKILL, "- Keep it short.", "- Keep it under 60 words.", [ids[1]]),
+                edit(AGENTS_PATH, "", "- Sign as Ada.\n", [ids[2], ids[0]], "Signature."),
+            ]
+        }
+    ]
+
+    result = rig.reflect()
+
+    assert [e.path for e in result.edits] == [AGENTS_PATH, SKILL] and result.dropped == ()
+    merged = result.edits[0]
+    assert merged.find == "" and merged.after == "- Keep emails short.\n- Sign as Ada.\n"
+    assert merged.episode_ids == (ids[0], ids[2]) and merged.rationale == "Short.; Signature."
+
+
 def test_edits_past_the_cap_are_dropped(tmp_path: Path) -> None:
     rig = Rig(tmp_path, [])
     ids = [episode.id for episode in rig.shortened(1)]

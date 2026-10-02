@@ -102,14 +102,15 @@ own messages wait for its lock, like any turn. A paused dot's reflection waits u
 3. The model returns find/replace edits: `{path, find, replace, rationale,
    episode_ids}`. Code builds the unified diff with `difflib`, because models
    get unified-diff line numbers wrong. The stored record is still a unified
-   diff.
+   diff. Edits that create the same new file are merged into one edit: texts
+   joined, rationales joined, episodes unioned. Only one edit can create a
+   file.
 4. Code checks each edit and drops it, with a logged reason, unless all of
    these hold:
    - the path is `/memories/AGENTS.md`, an existing skill's `SKILL.md`, or a
      wiki page (`/wiki/<name>.md`);
    - `find` occurs exactly once in the file. An empty `find` creates a file
-     that does not exist yet, which is how the first preference lands, since
-     `AGENTS.md` is not seeded;
+     that does not exist yet, which is how the first preference lands;
    - the edit changes the file;
    - it cites only episodes given to this run;
    - the file stays under its cap: 8000 characters for `AGENTS.md`, 20000

@@ -197,8 +197,9 @@ def test_edits_on_the_same_file_are_judged_in_order_against_the_current_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rig = Rig(tmp_path, monkeypatch)
-    ids = [rig.shortened() for _ in range(2)]
-    rig.reflect(agents_edit(PREFERENCE, ids), agents_edit("# Preferences\n\n- Be brief.\n", ids))
+    # Two nights proposing the file before the gate runs: within one night the creates are merged.
+    rig.reflect(agents_edit(PREFERENCE, [rig.shortened() for _ in range(2)]))
+    rig.reflect(agents_edit("# Preferences\n\n- Be brief.\n", [rig.shortened() for _ in range(2)]))
 
     first, second = rig.gate()
 

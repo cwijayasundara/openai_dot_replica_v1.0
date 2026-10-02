@@ -313,9 +313,15 @@ def serve(settings: Settings | None = None) -> None:
         ]
         for thread in job_threads:
             thread.start()
-        learning = threading.Thread(
-            target=_serve_lane, args=(settings, pool, repos, store, stop, "learning"), name="learning", daemon=True
-        )
+        learning_failed = threading.Event()
+
+        def serve_learning() -> None:
+            try:
+                _serve_lane(settings, pool, repos, store, stop, "learning")
+            except Exception:
+                learning_failed.set()  # _serve_lane has logged it and stopped the turns lane
+
+        learning = threading.Thread(target=serve_learning, name="learning", daemon=True)
         learning.start()
         try:
             _serve_lane(settings, pool, repos, store, stop, "turns")
@@ -324,6 +330,9 @@ def serve(settings: Settings | None = None) -> None:
             learning.join()
             for thread in job_threads:
                 thread.join()
+        # Exit non-zero, so a supervisor that restarts only on failure brings the learning lane back.
+        if learning_failed.is_set():
+            raise SystemExit("the learning lane failed")
     finally:
         pool.close()
 

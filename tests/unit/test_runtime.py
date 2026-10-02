@@ -145,3 +145,28 @@ def test_a_lane_that_fails_stops_the_worker(monkeypatch: pytest.MonkeyPatch) -> 
         worker_module._serve_lane(Settings(), None, None, None, stop, "learning")  # type: ignore[arg-type]
 
     assert stop.is_set() and closed == [True]
+
+
+def test_a_failed_learning_lane_makes_the_worker_exit_non_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubPool:
+        def close(self) -> None:
+            pass
+
+    def lane(settings: Any, pool: Any, repos: Any, store: Any, stop: threading.Event, lane: str) -> None:
+        if lane == "learning":
+            stop.set()
+            raise RuntimeError("database went away")
+        stop.wait(5)  # the turns lane runs until the failed lane stops it
+
+    monkeypatch.setattr(worker_module, "make_pool", lambda url: StubPool())
+    monkeypatch.setattr(worker_module, "migrate", lambda pool: None)
+    monkeypatch.setattr(worker_module, "PostgresRepositories", lambda pool: None)
+    monkeypatch.setattr(worker_module, "PostgresJobStore", lambda pool: None)
+    monkeypatch.setattr(worker_module, "_stop_event", threading.Event)
+    monkeypatch.setattr(worker_module, "_serve_lane", lane)
+    settings = Settings(_env_file=None, database_url="postgresql://unused", job_workers=0)  # type: ignore[call-arg]
+
+    with pytest.raises(SystemExit) as exited:
+        worker_module.serve(settings)
+
+    assert exited.value.code not in (None, 0)

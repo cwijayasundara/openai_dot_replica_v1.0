@@ -373,9 +373,9 @@ These are all offline, with the scripted model.
 
 ## Open items
 
-- Live models are not deterministic. Each arm is replayed once at the model
+- Live models are not deterministic (blocked on E2). Each arm is replayed once at the model
   factory's temperature. If E2 shows the gate flapping, replay each arm k
   times and compare majorities.
-- Replay depends on checkpoints being retained. If checkpoint pruning is
-  added, it must keep checkpoints that episodes reference for as long as
-  those episodes can be sampled.
+- Replay depends on checkpoints being retained. There is no pruning today,
+  so this is a rule for whoever adds it: keep checkpoints that episodes
+  reference for as long as those episodes can be sampled.

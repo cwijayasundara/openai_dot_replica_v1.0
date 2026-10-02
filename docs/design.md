@@ -279,7 +279,7 @@ Layout inside every backend: `/work` writable, `/in` (inputs) read-only, `/skill
 **Reflection loop (nightly, per dot):**
 
 1. Load the day's episodes.
-2. The `fast` model drafts edits to `AGENTS.md`, the wiki and skills as unified diffs, each linked to the episode ids behind it.
+2. The `fast` model drafts find/replace edits to `AGENTS.md`, the wiki and skills, each linked to the episode ids behind it. Code builds the unified diff that is stored and shown. Models get diff line numbers wrong.
 3. **Replay gate:** re-run up to N stored episodes with the edited harness using the scripted comparison (did the proposal now match what the human did?). Keep an edit only if the match rate does not fall and at least one episode improves.
 4. Commit accepted edits as a new `memory_version`, show the diff in the UI weekly, allow one-click rollback.
 

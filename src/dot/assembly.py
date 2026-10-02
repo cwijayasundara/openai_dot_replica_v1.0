@@ -37,12 +37,14 @@ from .middleware.budget import BudgetMiddleware, RunBudget
 from .middleware.guard import FS_TOOLS, SurfaceGuard, ToolSurfacePolicy
 from .middleware.guardian import GuardianMiddleware
 from .middleware.job_control import JobControlMiddleware
+from .middleware.memory import TurnMemoryMiddleware, TurnSkillsMiddleware
 from .middleware.offload import OffloadMiddleware
 from .middleware.policy import PolicyMiddleware
 from .middleware.redaction import RedactionMiddleware, Redactor
+from .middleware.replay import ReplayStop
 from .models import chat_model
 from .packs.loader import REPO_ROOT, load_pack, memories_namespace, wiki_namespace
-from .packs.schema import LoadedPack, Profile, SubagentSpec
+from .packs.schema import Decision, LoadedPack, Profile, SubagentSpec
 from .persistence.db import AuditEvent, Dot, Job, Repositories
 from .proactive.findings import FINDING_EFFECTS, build_finding_tools
 from .proactive.runs import ScheduledRun
@@ -62,6 +64,9 @@ from .tools.native.smtp import SmtpTransport
 from .tools.native.tavily import TavilySearch
 from .tools.registry import ToolRegistry
 
+# Where the dot's supervisor reads its preferences and skills; both live in the store.
+MEMORY_SOURCES = ["/memories/AGENTS.md"]
+SKILL_SOURCES = ["/memories/skills/"]
 # The supervisor reaches the sandbox through the coder subagent, not these tools.
 _SHELL_TOOLS = FS_TOOLS
 
@@ -182,13 +187,15 @@ def build_dot_agent(
     guardian: Guardian | None = None,
     sandbox_factory: Callable[[str], RunSandbox] | None = None,
     scheduled: ScheduledRun | None = None,
+    replay: ReplayStop | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Build the dot's supervisor for one capability profile.
 
     Policy, Guardian, audit and approval interrupts are enforced here.
     The sandbox factory is not called here. A scheduled run runs on its
     own thread id, may record findings, starts no background job (it would
-    escape the budget) and stops at the schedule's budget.
+    escape the budget) and stops at the schedule's budget. A replay stops
+    at its first proposal that is not a plain read.
     """
     settings = settings or get_settings()
     runtime = runtime or build_graph_runtime(settings)
@@ -259,20 +266,29 @@ def build_dot_agent(
         system_prompt=loaded.persona_text,
         tools=tools,
         subagents=subagents,
-        memory=["/memories/AGENTS.md"],
-        skills=["/memories/skills/"],
+        memory=MEMORY_SOURCES,
+        skills=SKILL_SOURCES,
         backend=backend,
-        middleware=_chain(
-            surface,
-            settings,
-            dot.dot_id,
-            policy,
-            guardian,
-            audit,
-            runtime.redactor,
-            capture_instruction=True,
-            budget=budget,
-        ),
+        middleware=[
+            *_chain(
+                surface,
+                settings,
+                dot.dot_id,
+                policy,
+                guardian,
+                audit,
+                runtime.redactor,
+                capture_instruction=True,
+                budget=budget,
+                # A replay must fail, not turn a model error into a reply the gate would score.
+                fail_hard=replay is not None,
+            ),
+            # Replace deepagents' load-once versions in place: the dot's thread never ends.
+            TurnMemoryMiddleware(backend=backend, sources=MEMORY_SOURCES, add_cache_control=True),
+            TurnSkillsMiddleware(backend=backend, sources=SKILL_SOURCES),
+            # Last, so its after_model runs first: ahead of the Guardian and approval review.
+            *([_bind_replay(replay, policy)] if replay is not None else []),
+        ],
         checkpointer=runtime.checkpointer,
         store=runtime.store,
     )
@@ -535,6 +551,26 @@ def _model_identifier(model: BaseChatModel) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _bind_replay(replay: ReplayStop, policy: PolicyResolver) -> ReplayStop:
+    effects = dict(policy.effects)
+    # Delegation runs other agents, so a replay stops there too.
+    delegating = {"task", *JOB_EFFECTS, *FINDING_EFFECTS}
+    replay.may_run = lambda name: (
+        name not in delegating and effects.get(name) is Effect.read and policy.decision(name) is Decision.allow
+    )
+    return replay
+
+
+def supervisor_model(settings: Settings, model: BaseChatModel | None = None) -> BaseChatModel:
+    """The model replay re-makes the supervisor's proposals with."""
+    return _role_model("supervisor", settings, model)
+
+
+def reflection_model(settings: Settings, model: BaseChatModel | None = None) -> BaseChatModel:
+    """The model nightly reflection drafts memory edits with."""
+    return _role_model("fast", settings, model)
 
 
 def _role_model(role: Role, settings: Settings, override: BaseChatModel | None) -> BaseChatModel:

@@ -474,6 +474,8 @@ Estimated total: about 50 engineering days for one engineer, less with Claude Co
 
 ## 4. Open items (non-blocking)
 
+Phase 8 progress, decisions waiting on review and follow-ups are tracked in [`pending.md`](pending.md).
+
 - ~~Email transport for `send_email`: SMTP relay or Gmail API.~~ Decided 2026-10-01: an SMTP relay. Real transports (Tavily search, DNS-checked fetch, SMTP) are wired by `assembly.default_tool_deps`; see [`transports.md`](transports.md).
 - Whether sweeps should use `glm-5p3` instead of Flash for harder domains; decide from E2 data.
 - Whether to add GKE Agent Sandbox before or after v1 GA.

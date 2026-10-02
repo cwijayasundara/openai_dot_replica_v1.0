@@ -179,7 +179,7 @@ def _check_tool_refs(pack: Pack, registry: ToolRegistry, errors: list[str]) -> N
                 if name not in known:
                     errors.append(f"profile {profile_name!r} names unknown subagent {name!r}")
     for schedule in pack.schedules:
-        if schedule.profile not in pack.profiles:
+        if schedule.profile is not None and schedule.profile not in pack.profiles:
             errors.append(f"schedule {schedule.name!r} names unknown profile {schedule.profile!r}")
 
     seen: set[tuple[str, str]] = set()
@@ -225,7 +225,7 @@ def _check_schedules(pack: Pack, registry: ToolRegistry, mcp_tools: set[str], er
             cron_trigger(schedule.cron, UTC)
         except ValueError as exc:
             errors.append(f"schedule {schedule.name!r}: {exc}")
-        profile = pack.profiles.get(schedule.profile)
+        profile = pack.profiles.get(schedule.profile) if schedule.profile is not None else None
         if schedule.kind != "sweep" or profile is None:
             continue
         # A subagent runs with its own tool list, not the profile's effect filter.

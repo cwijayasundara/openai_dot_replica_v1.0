@@ -1,6 +1,8 @@
 # Proactivity (P1, P2)
 
-A pack's `schedules` make a dot act without being asked. Two kinds exist.
+A pack's `schedules` make a dot act without being asked. Two kinds run an
+agent; a third, `reflection`, runs no agent and is described in
+[`learning-loop.md`](learning-loop.md).
 
 | Kind | Thread | Can do | Leaves | Says to the user |
 |---|---|---|---|---|

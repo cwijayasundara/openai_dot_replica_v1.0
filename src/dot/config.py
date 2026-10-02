@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Cloud Scheduler's OIDC token: the audience it is minted for and the service account it names.
     scheduler_audience: str | None = None
     scheduler_invoker: str | None = None
+    # One reflection reads at most this many episodes (oldest first) and keeps at most this many edits.
+    reflection_max_episodes: int = Field(default=200, ge=1)
+    reflection_max_edits: int = Field(default=5, ge=1)
+    # The replay gate: cited and random episodes per edit, and model calls per replay.
+    replay_cited: int = Field(default=5, ge=1)
+    replay_random: int = Field(default=5, ge=0)
+    replay_max_model_calls: int = Field(default=4, ge=1)
     # Threads per worker process that run background jobs beside the inbox loop.
     job_workers: int = Field(default=2, ge=0)
 

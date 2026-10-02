@@ -21,6 +21,66 @@ function inbound(message: ThreadMessage): { source: string; text: string } {
   return match ? { source: match[1], text: match[2] } : { source: message.source ?? "web", text: message.content };
 }
 
+function Correct({ messageId }: { messageId: string }) {
+  const { dotId } = useLive();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(event: { preventDefault(): void }) {
+    event.preventDefault();
+    if (!text.trim()) return;
+    setBusy(true);
+    try {
+      await api.correct(dotId, messageId, text.trim());
+      setDone(true);
+      setOpen(false);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) return <p className="mt-1 text-xs text-muted">Correction noted. Tonight&apos;s reflection will use it.</p>;
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs text-muted hover:text-ink">
+        Correct this
+      </button>
+    );
+  }
+  return (
+    <form onSubmit={submit} className="mt-2 space-y-2">
+      <ErrorNote error={error} />
+      <label className="block text-sm">
+        <span className="text-muted">What should the dot do differently?</span>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={2000}
+          className="mt-1 w-full rounded-md border border-rule bg-white px-2 py-1"
+        />
+      </label>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={busy || !text.trim()}
+          className="rounded-md bg-dot px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+        >
+          Save correction
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-sm text-muted">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function Message({ message }: { message: ThreadMessage }) {
   if (message.role === "human") {
     const { source, text } = inbound(message);
@@ -45,6 +105,7 @@ function Message({ message }: { message: ThreadMessage }) {
     return (
       <li className="text-sm text-muted">
         Called <span className="font-mono">{message.tool_calls.join(", ")}</span>
+        {message.id && <Correct messageId={message.id} />}
       </li>
     );
   }
@@ -66,7 +127,10 @@ function Message({ message }: { message: ThreadMessage }) {
     return (
       <li data-testid="thread-message" data-role="ai" className="flex gap-3">
         <span aria-hidden className="dot-mark mt-1.5 size-3 shrink-0" />
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        <div className="min-w-0">
+          <p className="whitespace-pre-wrap">{message.content}</p>
+          {message.id && <Correct messageId={message.id} />}
+        </div>
       </li>
     );
   }

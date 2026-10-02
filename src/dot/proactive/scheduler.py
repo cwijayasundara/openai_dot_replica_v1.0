@@ -47,7 +47,7 @@ def trigger(repos: Repositories, dot: Dot, name: str, at: datetime) -> InboxMess
     slot = at.astimezone(UTC).replace(second=0, microsecond=0).isoformat()
     payload = {"text": schedule.prompt, "schedule": schedule.name, "slot": slot}
     return repos.insert_schedule_run(
-        InboxMessage(0, dot.dot_id, "schedule", payload, schedule.profile, datetime.now(UTC))
+        InboxMessage(0, dot.dot_id, "schedule", payload, schedule.inbox_profile, datetime.now(UTC))
     )
 
 

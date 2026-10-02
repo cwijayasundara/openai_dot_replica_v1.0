@@ -37,16 +37,24 @@ class ScheduledRun:
     findings: tuple[Finding, ...] = ()
 
 
-def prepare(repos: Repositories, dot: Dot, message: InboxMessage, settings: Settings) -> ScheduledRun | None:
-    """The run for one schedule row, or None when a digest has nothing to report."""
+def schedule_of(dot: Dot, message: InboxMessage) -> Schedule:
+    """The pack schedule a schedule row was queued for."""
     pack = load_pack(REPO_ROOT / "packs" / dot.pack_name).pack
     name = message.payload.get("schedule")
     try:
         schedule = pack.schedule(name if isinstance(name, str) else "")
     except KeyError:
         raise ValueError(f"pack {pack.name!r} has no schedule {name!r}") from None
-    if schedule.profile != message.profile:
-        raise ValueError(f"schedule {schedule.name!r} runs profile {schedule.profile!r}, not {message.profile!r}")
+    if schedule.inbox_profile != message.profile:
+        raise ValueError(f"schedule {schedule.name!r} runs profile {schedule.inbox_profile!r}, not {message.profile!r}")
+    return schedule
+
+
+def prepare(repos: Repositories, dot: Dot, message: InboxMessage, settings: Settings) -> ScheduledRun | None:
+    """The run for one schedule row, or None when a digest has nothing to report."""
+    schedule = schedule_of(dot, message)
+    if schedule.kind == "reflection":
+        raise ValueError("a reflection runs no agent")
     budget = RunBudget(
         schedule.max_model_calls or settings.schedule_max_model_calls,
         schedule.max_tokens or settings.schedule_max_tokens,

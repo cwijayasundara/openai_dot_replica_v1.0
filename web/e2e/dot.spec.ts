@@ -47,6 +47,13 @@ test("one thread across Slack and the web: message, job, approval, audit", async
   const sent = await (await request.get(`${E2E_API}/__e2e/sent`)).json();
   expect(sent.to).toEqual(["sam@example.com"]);
 
+  // A correction targets one of the dot's messages and is stored for reflection.
+  const reply = page.locator('[data-testid="thread-message"][data-role="ai"]').filter({ hasText: "Email sent to Sam." });
+  await reply.getByRole("button", { name: "Correct this" }).click();
+  await reply.getByLabel("What should the dot do differently?").fill("Keep emails to Sam under 50 words");
+  await reply.getByRole("button", { name: "Save correction" }).click();
+  await expect(reply).toContainText("Correction noted.");
+
   await page.getByRole("link", { name: "Audit trail" }).click();
   const rows = page.getByTestId("audit-row");
   // The Guardian reviews the proposal, then the edited arguments again.

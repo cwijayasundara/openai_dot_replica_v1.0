@@ -93,7 +93,11 @@ def test_fire_queues_every_active_dot_of_the_pack() -> None:
 def test_install_adds_one_cron_job_per_pack_schedule(tmp_path: Path) -> None:
     settings = Settings(_env_file=None, schedule_timezone="Europe/London")  # type: ignore[call-arg]
     scheduler = BackgroundScheduler(timezone=ZoneInfo("Europe/London"))
-    assert install(scheduler, _repos(), settings) == ["research-analyst:sweep", "research-analyst:digest"]
+    assert install(scheduler, _repos(), settings) == [
+        "research-analyst:sweep",
+        "research-analyst:digest",
+        "research-analyst:reflection",
+    ]
     job = scheduler.get_job("research-analyst:digest")
     assert job is not None and job.coalesce and job.max_instances == 1
     saturday = datetime(2026, 10, 3, 12, 0, tzinfo=ZoneInfo("Europe/London"))

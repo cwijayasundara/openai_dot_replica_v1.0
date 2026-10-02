@@ -125,10 +125,22 @@ def exercise(repos: Repositories) -> None:
     repos.update_episode(Episode(episode.id, "d1", WHEN, "draft", {"len": 80}, "shorten", {"ok": True}))
     assert repos.get_episode(episode.id).proposal == {"len": 80}
 
-    version = repos.insert_memory_version(MemoryVersion(0, "d1", WHEN, "--- a\n+++ b", [episode.id], "proposed"))
+    second = repos.insert_episode(Episode(0, "d1", WHEN.replace(hour=13), "draft", {}, "approve", {}))
+    third = repos.insert_episode(Episode(0, "d1", WHEN.replace(hour=14), "draft", {}, "reject", {}))
+    assert [e.id for e in repos.list_episodes("d1")] == [episode.id, second.id, third.id]
+    assert [e.id for e in repos.list_episodes("d1", after_id=episode.id, limit=1)] == [second.id]
+    assert [e.id for e in repos.list_episodes("d1", before=WHEN.replace(hour=14))] == [episode.id, second.id]
+
+    version = repos.insert_memory_version(
+        MemoryVersion(0, "d1", WHEN, "--- a\n+++ b", [episode.id], "proposed", {"path": "/memories/AGENTS.md"})
+    )
     assert repos.get_memory_version(version.id).episodes == [episode.id]
-    repos.update_memory_version(MemoryVersion(version.id, "d1", WHEN, "--- a\n+++ b", [episode.id], "accepted"))
+    assert repos.get_memory_version(version.id).detail == {"path": "/memories/AGENTS.md"}
+    repos.update_memory_version(
+        MemoryVersion(version.id, "d1", WHEN, "--- a\n+++ b", [episode.id], "accepted", {"reason": "replay"})
+    )
     assert repos.get_memory_version(version.id).status == "accepted"
+    assert repos.get_memory_version(version.id).detail == {"reason": "replay"}
     newer = repos.insert_memory_version(MemoryVersion(0, "d1", WHEN.replace(hour=13), "+x", [], "proposed"))
     assert [v.id for v in repos.list_memory_versions("d1")] == [newer.id, version.id]
 

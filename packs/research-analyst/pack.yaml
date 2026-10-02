@@ -42,3 +42,6 @@ schedules:
      max_model_calls: 15, max_tokens: 150000}
   - {name: digest, kind: digest, cron: "45 8 * * 1-5", profile: digest, prompt: "Send the morning digest.",
      max_model_calls: 6, max_tokens: 60000}
+  # Reflection runs no agent: it drafts memory edits from the day's approvals and corrections.
+  - {name: reflection, kind: reflection, cron: "0 2 * * *",
+     prompt: "Learn how this user wants research, briefs and emails done."}

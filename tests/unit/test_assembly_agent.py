@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from deepagents.backends.utils import create_file_data
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from dot.assembly import build_dot_agent, build_graph_runtime
 from dot.config import Settings
-from dot.packs.loader import REPO_ROOT, load_pack, seed_store
-from dot.persistence.db import Dot
+from dot.packs.loader import REPO_ROOT, load_pack, memories_namespace, seed_store
+from dot.persistence.db import Dot, MemoryRepositories
 from dot.sandbox.base import RunSandbox
+from dot.surfaces.dots import create_dot
 from dot.tools.artifacts import ArtifactStore
 from dot.tools.native.deps import Hit, ToolDeps
 from tests.support.scripted_model import ScriptedChatModel, call, say, tools
@@ -162,3 +164,31 @@ def test_tool_outside_the_profile_is_not_offered_or_callable(tmp_path: Path) -> 
     assert "researcher" in description
     assert "coder" not in description
     assert "- general-purpose:" not in description
+
+
+def test_memory_and_skill_edits_reach_the_next_turn_on_the_same_thread(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, database_url=None, object_root=str(tmp_path))  # type: ignore[call-arg]
+    repos = MemoryRepositories()
+    runtime = build_graph_runtime(settings)
+    runtime.audit_repositories = repos
+    dot = create_dot(repos, runtime, "research-analyst", "owner")
+    model = ScriptedChatModel(script=[say("one"), say("two")])
+    config = {"configurable": {"thread_id": dot.thread_id}}
+    namespace = memories_namespace(dot.dot_id)
+    skill = "---\nname: tone\ndescription: {}\n---\nBody.\n"
+
+    runtime.store.put(namespace, "/AGENTS.md", dict(create_file_data("Prefer PREF-ONE.")))
+    runtime.store.put(namespace, "/skills/tone/SKILL.md", dict(create_file_data(skill.format("SKILL-ONE"))))
+    build_dot_agent(dot, "chat", settings=settings, runtime=runtime, model=model).invoke(
+        {"messages": [HumanMessage("a")]}, config
+    )
+    runtime.store.put(namespace, "/AGENTS.md", dict(create_file_data("Prefer PREF-TWO.")))
+    runtime.store.put(namespace, "/skills/tone/SKILL.md", dict(create_file_data(skill.format("SKILL-TWO"))))
+    build_dot_agent(dot, "chat", settings=settings, runtime=runtime, model=model).invoke(
+        {"messages": [HumanMessage("b")]}, config
+    )
+
+    first, second = (str(seen[0].content) for seen in model.seen)
+    assert "PREF-ONE" in first and "SKILL-ONE" in first
+    assert "PREF-TWO" in second and "PREF-ONE" not in second
+    assert "SKILL-TWO" in second and "SKILL-ONE" not in second

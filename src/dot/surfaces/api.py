@@ -17,9 +17,10 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
-from dot.assembly import GraphRuntime, build_graph_runtime
+from dot.assembly import GraphRuntime, build_dot_agent, build_graph_runtime
 from dot.config import Settings, get_settings
 from dot.jobs.store import JobStore, MemoryJobStore, PostgresJobStore
+from dot.memory.episodes import CorrectionBody, record_correction
 from dot.packs.loader import REPO_ROOT, PackLoadError, load_pack
 from dot.persistence.db import (
     ApprovalConflict,
@@ -264,6 +265,15 @@ def create_app(
         viewer(request, dot_id)
         rows = surface.repos.list_dot_approvals(dot_id, status)
         return {"dot_id": dot_id, "approvals": [approval_view(card, surface.runtime.redactor) for card in rows]}
+
+    @app.post("/dots/{dot_id}/corrections", status_code=201)
+    def correction(dot_id: str, body: CorrectionBody, request: Request) -> dict[str, Any]:
+        """Record "don't do X" against one of the dot's AI messages, as an episode for reflection."""
+        dot = viewer(request, dot_id)  # refuses anonymous callers, so the principal is set
+        # Building the agent does not invoke it; only its checkpointed history is read.
+        graph = build_dot_agent(dot, "chat", settings=surface.settings, runtime=surface.runtime, model=surface.model)
+        episode = record_correction(surface.repos, graph, dot, str(principal(request)), body)
+        return {"episode_id": episode.id, "dot_id": dot_id}
 
     @app.get("/dots/{dot_id}/findings")
     def findings(dot_id: str, request: Request, status: str | None = None) -> dict[str, Any]:

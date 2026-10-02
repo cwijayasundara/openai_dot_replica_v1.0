@@ -14,6 +14,8 @@ export type Pack = { name: string; profiles: string[]; subagents: string[] };
 
 export type ThreadMessage = {
   role: "human" | "ai" | "tool" | "system" | string;
+  // Set on AI messages; a correction names the message it corrects.
+  id?: string;
   content: string;
   source?: string;
   name?: string;
@@ -68,7 +70,15 @@ export type AuditEvent = {
   detail: Record<string, unknown> | null;
 };
 
-export type MemoryVersion = { id: number; at: string; diff: string; episodes: number[]; status: string };
+export type MemoryVersion = {
+  id: number;
+  at: string;
+  diff: string;
+  episodes: number[];
+  status: string;
+  // The file, the rationale, and later the replay results.
+  detail: { path?: string; rationale?: string } & Record<string, unknown>;
+};
 
 export type Decision =
   | { type: "approve" }
@@ -123,6 +133,8 @@ export const api = {
     call<{ events: AuditEvent[]; actors: string[]; next_after_id: number | null }>(
       `/dots/${id}/sandbox?after_id=${afterId}&limit=200`,
     ),
+  correct: (id: string, messageId: string, text: string) =>
+    call<{ episode_id: number }>(`/dots/${id}/corrections`, post({ message_id: messageId, text })),
   decide: (approvalId: string, decision: Decision) =>
     call<{ status: string }>(`/approvals/${approvalId}`, post(decision)),
 };

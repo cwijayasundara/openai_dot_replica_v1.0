@@ -8,7 +8,7 @@ import { Time } from "@/components/time";
 import { api, type MemoryVersion } from "@/lib/api";
 
 const STATUS: Record<string, string> = {
-  proposed: "Proposed",
+  proposed: "Proposed, waiting for replay",
   accepted: "Accepted",
   rejected: "Rejected by replay",
   rolled_back: "Rolled back",
@@ -67,6 +67,7 @@ export default function MemoryPage() {
                   <Time at={version.at} />
                 </span>
               </div>
+              {version.detail.rationale && <p className="mt-1 max-w-prose">{version.detail.rationale}</p>}
               {version.episodes.length > 0 && (
                 <p className="text-sm text-muted">From episodes {version.episodes.join(", ")}</p>
               )}

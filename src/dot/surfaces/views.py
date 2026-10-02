@@ -85,4 +85,5 @@ def memory_version_view(version: MemoryVersion, redactor: Redactor) -> Json:
         "diff": redactor.text(version.diff),
         "episodes": version.episodes,
         "status": version.status,
+        "detail": redactor.content(version.detail),
     }

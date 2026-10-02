@@ -105,6 +105,9 @@ def _message_view(message: Any) -> Json:
     if not isinstance(message, BaseMessage):
         return {"role": "unknown", "content": str(message)}
     view: Json = {"role": message.type, "content": _text(message.content)}
+    if message.type == "ai" and message.id:
+        # A correction names the AI message it corrects.
+        view["id"] = message.id
     channel = message.additional_kwargs.get(CHANNEL_KEY)
     if isinstance(channel, dict) and isinstance(channel.get("source"), str):
         view["source"] = channel["source"]

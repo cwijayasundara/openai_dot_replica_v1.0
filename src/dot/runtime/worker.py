@@ -15,12 +15,22 @@ from langchain_core.runnables import RunnableConfig
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from dot.assembly import GraphRuntime, build_dot_agent, build_graph_runtime, dot_artifacts
+from dot.assembly import (
+    GraphRuntime,
+    build_dot_agent,
+    build_graph_runtime,
+    dot_artifacts,
+    reflection_model,
+    supervisor_model,
+)
 from dot.channels.base import DeliveringEventChannel
 from dot.channels.outbox import PostgresOutbox
 from dot.config import Settings, get_settings
 from dot.jobs.runner import JobRunner, run_job
 from dot.jobs.store import JobStore, PostgresJobStore
+from dot.memory.episodes import PROFILE_METADATA_KEY
+from dot.memory.reflection import run_reflection
+from dot.memory.replay import gate_proposed
 from dot.middleware.guardian import GUARDIAN_INSTRUCTION_KEY
 from dot.persistence.db import Dot, InboxMessage, Json, PostgresRepositories, Repositories, make_pool, migrate
 from dot.proactive import runs as scheduled_runs
@@ -171,6 +181,13 @@ def run_agent_turn(
         if batch and batch[0].source == "schedule":
             if len(batch) != 1 or repos is None:
                 raise ValueError("a scheduled run needs one queue row and repositories")
+            schedule = scheduled_runs.schedule_of(dot, batch[0])
+            if schedule.kind == "reflection":
+                # No agent on the dot's thread: reflection drafts edits, then the gate replays and applies them.
+                drafter = reflection_model(settings, model)
+                run_reflection(repos, runtime.store, dot, schedule, drafter, settings, runtime.redactor)
+                gate_proposed(repos, runtime, dot, settings, supervisor_model(settings, model))
+                return
             scheduled = scheduled_runs.prepare(repos, dot, batch[0], settings)
             if scheduled is None:
                 return
@@ -184,7 +201,11 @@ def run_agent_turn(
             scheduled=scheduled,
         )
         thread_id = scheduled.thread_id if scheduled is not None else dot.thread_id
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        # Checkpoints carry the profile, so a later correction knows which profile made a message.
+        config: RunnableConfig = {
+            "configurable": {"thread_id": thread_id},
+            "metadata": {PROFILE_METADATA_KEY: profile},
+        }
         snapshot = agent.get_state(config)
         incoming: Any
         if scheduled is not None and repos is not None:

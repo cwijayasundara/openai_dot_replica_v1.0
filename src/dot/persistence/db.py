@@ -167,6 +167,7 @@ class MemoryVersion:
     diff: str
     episodes: list[int]
     status: str
+    detail: Json = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -251,6 +252,11 @@ class Repositories(Protocol):
     def insert_episode(self, episode: Episode) -> Episode: ...
     def get_episode(self, episode_id: int) -> Episode: ...
     def update_episode(self, episode: Episode) -> None: ...
+    def list_episodes(
+        self, dot_id: str, *, after_id: int = 0, before: datetime | None = None, limit: int = 100
+    ) -> list[Episode]:
+        """Oldest first: episodes with ``id > after_id`` recorded before ``before``."""
+        ...
 
     def insert_memory_version(self, version: MemoryVersion) -> MemoryVersion: ...
     def get_memory_version(self, version_id: int) -> MemoryVersion: ...
@@ -587,6 +593,20 @@ class MemoryRepositories:
         self.get_episode(episode.id)
         self.episodes[episode.id] = episode
 
+    def list_episodes(
+        self, dot_id: str, *, after_id: int = 0, before: datetime | None = None, limit: int = 100
+    ) -> list[Episode]:
+        self.get_dot(dot_id)
+        rows = sorted(
+            (
+                e
+                for e in self.episodes.values()
+                if e.dot_id == dot_id and e.id > after_id and (before is None or e.at < before)
+            ),
+            key=lambda e: e.id,
+        )
+        return rows[:limit]
+
     def insert_memory_version(self, version: MemoryVersion) -> MemoryVersion:
         self.get_dot(version.dot_id)
         stored = MemoryVersion(
@@ -596,6 +616,7 @@ class MemoryRepositories:
             diff=version.diff,
             episodes=list(version.episodes),
             status=version.status,
+            detail=dict(version.detail),
         )
         self.memory_versions[stored.id] = stored
         return stored
@@ -1217,10 +1238,23 @@ class PostgresRepositories:
             str(episode.id),
         )
 
+    def list_episodes(
+        self, dot_id: str, *, after_id: int = 0, before: datetime | None = None, limit: int = 100
+    ) -> list[Episode]:
+        self.get_dot(dot_id)
+        with self.pool.connection() as conn:
+            ids = conn.execute(
+                "SELECT id FROM episodes WHERE dot_id = %s AND id > %s AND (%s::timestamptz IS NULL OR at < %s)"
+                " ORDER BY id LIMIT %s",
+                (dot_id, after_id, before, before, limit),
+            ).fetchall()
+        return [self.get_episode(int(row[0])) for row in ids]
+
     def insert_memory_version(self, version: MemoryVersion) -> MemoryVersion:
         row = self._insert(
-            "INSERT INTO memory_versions (dot_id, at, diff, episodes, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (version.dot_id, version.at, version.diff, version.episodes, version.status),
+            "INSERT INTO memory_versions (dot_id, at, diff, episodes, status, detail)"
+            " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (version.dot_id, version.at, version.diff, version.episodes, version.status, Jsonb(version.detail)),
         )
         return self.get_memory_version(int(row["id"]))
 
@@ -1238,12 +1272,13 @@ class PostgresRepositories:
             diff=row["diff"],
             episodes=[int(n) for n in row["episodes"]],
             status=row["status"],
+            detail=row["detail"],
         )
 
     def update_memory_version(self, version: MemoryVersion) -> None:
         self._must(
-            "UPDATE memory_versions SET at = %s, diff = %s, episodes = %s, status = %s WHERE id = %s",
-            (version.at, version.diff, version.episodes, version.status, version.id),
+            "UPDATE memory_versions SET at = %s, diff = %s, episodes = %s, status = %s, detail = %s WHERE id = %s",
+            (version.at, version.diff, version.episodes, version.status, Jsonb(version.detail), version.id),
             "memory_versions",
             str(version.id),
         )

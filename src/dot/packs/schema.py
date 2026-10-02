@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dot.tools.effects import Effect
 
+# Inbox rows need a profile; a reflection row's is this placeholder, never an agent profile.
+REFLECTION_PROFILE = "reflection"
+
 
 class Decision(StrEnum):
     allow = "allow"
@@ -87,17 +90,34 @@ class Schedule(BaseModel):
     A ``sweep`` runs on its own thread, may only read, and records findings.
     A ``digest`` runs on the dot's thread, summarises open findings and posts
     to the dot's default channel. Budgets left unset take the deployment's.
+    A ``reflection`` runs no agent and has no profile: it drafts memory edits
+    from the dot's episodes, and its prompt says what to learn.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     cron: str
-    profile: str
+    profile: str | None = None
     prompt: str
-    kind: Literal["sweep", "digest"] = "sweep"
+    kind: Literal["sweep", "digest", "reflection"] = "sweep"
     max_model_calls: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def check_profile(self) -> Schedule:
+        if self.kind == "reflection" and self.profile is not None:
+            raise ValueError("a reflection schedule runs no agent, so it takes no profile")
+        if self.kind != "reflection" and self.profile is None:
+            raise ValueError(f"a {self.kind} schedule needs a profile")
+        if self.kind == "reflection" and (self.max_model_calls is not None or self.max_tokens is not None):
+            raise ValueError("a reflection makes one model call, bounded by its episode cap")
+        return self
+
+    @property
+    def inbox_profile(self) -> str:
+        """The profile written on this schedule's inbox rows."""
+        return self.profile if self.profile is not None else REFLECTION_PROFILE
 
 
 class Pack(BaseModel):

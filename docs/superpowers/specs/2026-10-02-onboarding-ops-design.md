@@ -148,7 +148,7 @@ Every result is compact JSON, and file contents never reach the model. Errors co
 | A 422 from `POST /runs` | `ok: false` with the workbench's detail. The finding stays visible in chat. |
 | The file changed after approval | `start_run` refuses on the sha mismatch. The next intake-sweep proposes the new version. |
 | A file was rejected at approval | `list_drops` marks it declined, and it is not proposed again until its content changes. |
-| A start card (or any approval) is pending | The dot is paused: no schedule is queued for it, sweeps and digests included, until the card is decided. Missed slots are not caught up. `daily` fires at 06:45, before `intake` can raise a card, so the morning digest is not lost to a card left overnight. |
+| A start card (or any approval) is pending | The dot is paused: no schedule is queued for it, sweeps and digests included, until the card is decided. Missed slots are not caught up. `daily` fires at 06:45, before the day's first `intake` (07:05) can raise a card, so a card raised during the day cannot skip it. A card still pending from the previous day does skip it; `intake` stops at 17:50 to make that less likely, and cards should be decided before the end of the day. |
 | A sponsor folder is not registered in the workbench | A `Skipped file` finding with "unknown sponsor". |
 
 ## Testing

@@ -41,6 +41,12 @@ whether the replay gate needs repeated runs.
 
 ## 3. Housekeeping
 
+- **Schedules for a paused dot:** a pending approval pauses all of a dot's
+  schedules (sweeps included); consider letting sweeps run and digests catch
+  up after the decision. Before letting sweeps run, note that
+  `persist_interrupts` sets the dot `active` after any turn that ends without
+  an interrupt, a sweep's included, which would unpause the dot while its card
+  still waits.
 - **`import dot` outside pytest.** On this machine it still needs either the
   `chflags` workaround or the opt-in venv relocation outside `~/Documents`
   (`UV_PROJECT_ENVIRONMENT`); see CLAUDE.md.

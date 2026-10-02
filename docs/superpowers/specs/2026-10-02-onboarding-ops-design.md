@@ -47,18 +47,18 @@ The workbench API is in `src/onboarding_agent/surfaces/api.py` in that repo.
 
 ## Flow
 
-1. **`intake-sweep`** runs every 15 minutes, 07:00–22:00, Monday–Friday. It is a sweep with profile `sweep`.
+1. **`intake-sweep`** runs every 15 minutes, 07:00–17:45, Monday–Friday. It is a sweep with profile `sweep`.
    - It calls `list_drops()`. Every file that is supported, has no workbench run, and is not declined becomes a finding: title `New file <name> for <sponsor>`, with a summary of size, sha256 and type.
    - Unsupported or oversized files become findings titled `Skipped file …`, with the reason.
 2. **`status-sweep`** runs every hour, 07:00–22:00, Monday–Friday. It is a sweep with profile `sweep`.
    - It calls `list_runs()` to enumerate runs and `get_run()` for each run not locked or rejected. Each run that `get_run` shows waiting at a gate, or with an `error` or `job_error`, becomes a finding. `list_runs` cannot judge this: the workbench's run record keeps status `scoping` and its creation time until the run is rejected or locked.
    - Titles are fixed per run and state (`Run <id> waiting at brief`), so one open finding exists per blocker.
    - Its summary carries the phase, status, age, the gate message, any error or job error, and the brief questions, so the digest can report how long each blocker has aged.
-3. **`intake`** is a digest at `5-59/15 7-22 * * 1-5`, five minutes after each `intake-sweep` (which fires at `*/15 7-22 * * 1-5`), with profile `intake` and `findings_from: [intake-sweep]`.
+3. **`intake`** is a digest at `5-59/15 7-17 * * 1-5`, five minutes after each `intake-sweep` (which fires at `*/15 7-17 * * 1-5`), with profile `intake` and `findings_from: [intake-sweep]`.
    - For each `New file` finding, the dot calls `start_run(sponsor_id, file_name, sha256)`. That raises an approval card.
    - After approval, the tool uploads the file and returns the `run_id`.
    - Its findings are marked reported when the turn ends in a reply *or* in an approval wait (below).
-4. **`daily`** is a digest at `45 8 * * 1-5` with profile `digest` and `findings_from: [status-sweep]`. It posts one summary:
+4. **`daily`** is a digest at `45 6 * * 1-5`, before `intake` first fires, with profile `digest` and `findings_from: [status-sweep]`. It posts one summary:
    - runs grouped by phase;
    - blockers (gate waits and errors) with their ages.
 
@@ -148,7 +148,7 @@ Every result is compact JSON, and file contents never reach the model. Errors co
 | A 422 from `POST /runs` | `ok: false` with the workbench's detail. The finding stays visible in chat. |
 | The file changed after approval | `start_run` refuses on the sha mismatch. The next intake-sweep proposes the new version. |
 | A file was rejected at approval | `list_drops` marks it declined, and it is not proposed again until its content changes. |
-| The dot's thread is waiting at an approval | The next `intake` fails with "thread is paused", as digests do today, and retries later. |
+| A start card (or any approval) is pending | The dot is paused: no schedule is queued for it, sweeps and digests included, until the card is decided. Missed slots are not caught up. `daily` fires at 06:45, before `intake` can raise a card, so the morning digest is not lost to a card left overnight. |
 | A sponsor folder is not registered in the workbench | A `Skipped file` finding with "unknown sponsor". |
 
 ## Testing

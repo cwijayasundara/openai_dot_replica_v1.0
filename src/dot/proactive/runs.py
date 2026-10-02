@@ -1,7 +1,9 @@
 """How the worker runs a scheduled inbox row. Code decides each of these, never the model.
 
-- A sweep runs on a thread of its own, so a paused chat thread never blocks
-  it and its working does not fill the user's thread. Its replies go nowhere.
+- A sweep runs on a thread of its own, so its working does not fill the
+  user's thread. Its replies go nowhere.
+- While an approval card waits, the dot is paused and none of its schedules
+  is queued or claimed, sweeps included (see ``scheduler.trigger``).
 - A digest runs on the dot's thread. It is skipped when nothing is open. Its
   request carries a snapshot of the open findings, and its reply goes to the
   dot's default channel: the bound Slack channel, else the web thread only.

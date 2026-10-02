@@ -32,6 +32,14 @@ def test_sweeps_reach_only_read_tools() -> None:
         assert registry.effect("list_drops") is Effect.read
 
 
+def test_daily_fires_before_intake_can_pause_the_dot() -> None:
+    # A pending start card pauses every schedule of the dot, so the daily digest runs first.
+    crons = {s.name: s.cron for s in load_pack(PACK).pack.schedules}
+    assert crons["daily"] == "45 6 * * 1-5"
+    assert crons["intake-sweep"] == "*/15 7-17 * * 1-5"
+    assert crons["intake"] == "5-59/15 7-17 * * 1-5"
+
+
 def test_digests_read_their_sweeps_findings() -> None:
     pack = load_pack(PACK).pack
     assert pack.schedule("intake").findings_from == ["intake-sweep"]

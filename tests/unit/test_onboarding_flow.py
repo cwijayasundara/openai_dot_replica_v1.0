@@ -23,6 +23,7 @@ from dot.channels.outbox import MemoryOutbox
 from dot.config import Settings
 from dot.persistence.db import ChannelBinding, Finding, InboxMessage, MemoryRepositories
 from dot.proactive.findings import OPEN, REPORTED
+from dot.proactive.scheduler import fire as fire_all
 from dot.proactive.scheduler import trigger
 from dot.runtime.turns import InMemoryEventChannel
 from dot.runtime.worker import run_agent_turn
@@ -130,6 +131,14 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         assert intake_finding.status == REPORTED
         assert [kind for kind, _ in posted()] == ["approval"]
 
+        # While the card is pending the dot is paused, and no schedule of it is queued, sweeps included.
+        paused = repos.get_dot(dot.dot_id)
+        assert paused.status == "paused"
+        later = datetime(2026, 10, 5, 9, 30, tzinfo=UTC)
+        for name in ("intake-sweep", "status-sweep", "intake", "daily"):
+            assert fire_all(repos, "onboarding-ops", name, later) == []
+            assert trigger(repos, paused, name, later) is None
+
         # 3. A human approves; the resumed turn uploads the file's bytes.
         decide(repos, card.approval_id, "reviewer", ReviewDecision(type="approve"))
         resume = next(m for m in repos.inbox.values() if m.source == "approval" and m.done_at is None)
@@ -142,6 +151,11 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         run_id = started["run_id"]
         assert run_id == fake.runs[0]["id"]
         assert posted() == [("message", "Started a run for affiliates.csv (sponsor-a).")]
+        # The decision unpauses the dot, and its schedules queue again.
+        assert repos.get_dot(dot.dot_id).status == "active"
+        [queued] = fire_all(repos, "onboarding-ops", "status-sweep", later)
+        # Not run here; step 4 fires its own slot.
+        repos.update_inbox(replace(queued, claimed_at=later, done_at=later))
 
         # The workbench moves the run to the brief gate with one question.
         # Its record keeps status "scoping"; the gate shows only in the run's graph state.
@@ -198,7 +212,7 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
                 say(f"Onboarding digest: {run_id} (sponsor-a) waits at the brief gate; a sponsor email is drafted."),
             ]
         )
-        fire("daily", daily, datetime(2026, 10, 6, 8, 45, tzinfo=UTC))
+        fire("daily", daily, datetime(2026, 10, 6, 6, 45, tzinfo=UTC))
         daily_results = _results(daily)
         # The contact comes from the dot's /wiki/sponsors.md; the workbench knows none.
         [contact] = [s["contact"] for s in daily_results["list_sponsors"]["sponsors"] if s["id"] == "sponsor-a"]

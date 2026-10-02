@@ -37,10 +37,15 @@ schedules:
   Guardian's objective is the schedule's prompt, never the findings' text. The
   reply goes to the bound Slack channel (`dot link-slack --channel`) as a new
   message. With no channel bound, it stays in the web thread. After a turn
-  that ends in a reply, or waits at an approval, exactly the findings it was shown are marked
-  `reported`, so the next digest does not repeat them. While the dot's
-  thread waits for an approval, the digest fails with "thread is paused for
-  human review". Its findings stay open and the next firing tries again.
+  that ends in a reply, or waits at an approval, exactly the findings it was
+  shown are marked `reported`, so the next digest does not repeat them.
+- **A pending approval pauses the dot's schedules.** While any approval card
+  on the dot's thread waits for a decision, the dot's status is `paused`.
+  The scheduler and the webhook queue nothing for a paused dot, sweeps
+  included, and the worker claims none of its queued rows except the
+  approval's resume. The decision makes the dot `active` again. Slots that
+  fired during the pause are not caught up; open findings stay open for the
+  next digest that runs.
 - **Budgets.** Each run has one model-call and token ceiling, shared with its
   subagents. It comes from the schedule, else from `DOT_SCHEDULE_MAX_MODEL_CALLS`
   and `DOT_SCHEDULE_MAX_TOKENS`. The next call past the ceiling ends the run

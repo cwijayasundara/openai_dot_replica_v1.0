@@ -53,8 +53,9 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
 
 def test_me_packs_and_my_dots(rig: Rig) -> None:
     assert rig.client.get("/me").json() == {"user_id": "ada"}
-    [pack] = rig.client.get("/packs").json()["packs"]
-    assert pack["name"] == "research-analyst" and "chat" in pack["profiles"]
+    packs = {p["name"]: p for p in rig.client.get("/packs").json()["packs"]}
+    assert set(packs) == {"onboarding-ops", "research-analyst"}
+    assert "chat" in packs["research-analyst"]["profiles"]
     assert [d["dot_id"] for d in rig.client.get("/dots").json()["dots"]] == [rig.dot.dot_id]
 
 

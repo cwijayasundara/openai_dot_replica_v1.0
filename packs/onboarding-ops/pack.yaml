@@ -1,0 +1,33 @@
+name: onboarding-ops
+persona: persona.md
+models: {supervisor: glm-5p3, heavy: kimi-k3, fast: glm-5p3-flash}
+skills: skills/
+wiki: wiki/
+tools:
+  native: [list_sponsors, list_drops, list_runs, get_run, start_run, draft_email, send_email, write_report]
+  mcp: []
+subagents: []
+profiles:
+  chat:
+    tools: "*"
+  sweep:
+    effects: [read]
+  intake:
+    tools: [list_drops, list_runs, start_run]
+  digest:
+    tools: [list_runs, get_run, list_sponsors, draft_email]
+policy: policy.yaml
+schedules:
+  # Crons are read in DOT_SCHEDULE_TIMEZONE. Sweeps only read; the dot never answers a workbench gate.
+  - {name: intake-sweep, cron: "*/15 7-22 * * 1-5", profile: sweep, max_model_calls: 8, max_tokens: 60000,
+     prompt: "Call list_drops. Record one finding per supported file that has no run and is not declined, titled 'New file <file_name> for <sponsor_id>', with its sha256 in the summary. Record one 'Skipped file <file_name> for <sponsor_id>' finding per file with a reason."}
+  - {name: status-sweep, cron: "0 7-22 * * 1-5", profile: sweep, max_model_calls: 12, max_tokens: 100000,
+     prompt: "Call list_runs, then get_run for runs not locked or rejected. Record one finding per run waiting at a gate, in error, or not updated for 24 hours, titled 'Run <run_id> <state>', with phase, status, age, gate message and any brief questions in the summary."}
+  - {name: intake, kind: digest, cron: "5-59/15 7-22 * * 1-5", profile: intake, findings_from: [intake-sweep],
+     max_model_calls: 8, max_tokens: 60000,
+     prompt: "For each 'New file' finding, call start_run with its sponsor_id, file_name and sha256. Then reply with one line per file."}
+  - {name: daily, kind: digest, cron: "45 8 * * 1-5", profile: digest, findings_from: [status-sweep],
+     max_model_calls: 10, max_tokens: 80000,
+     prompt: "Send the morning onboarding digest: runs by phase, blockers with ages, stale runs. For each run waiting at the brief gate, draft an email to the sponsor's contact from /wiki/sponsors.md asking its brief questions."}
+  - {name: reflection, kind: reflection, cron: "0 2 * * *",
+     prompt: "Learn how this user wants files triaged, runs reported and sponsor questions drafted."}

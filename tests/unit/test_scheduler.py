@@ -94,6 +94,11 @@ def test_install_adds_one_cron_job_per_pack_schedule(tmp_path: Path) -> None:
     settings = Settings(_env_file=None, schedule_timezone="Europe/London")  # type: ignore[call-arg]
     scheduler = BackgroundScheduler(timezone=ZoneInfo("Europe/London"))
     assert install(scheduler, _repos(), settings) == [
+        "onboarding-ops:intake-sweep",
+        "onboarding-ops:status-sweep",
+        "onboarding-ops:intake",
+        "onboarding-ops:daily",
+        "onboarding-ops:reflection",
         "research-analyst:sweep",
         "research-analyst:digest",
         "research-analyst:reflection",

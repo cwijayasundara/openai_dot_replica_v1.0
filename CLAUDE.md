@@ -15,6 +15,8 @@ This repository builds an open, self-hostable equivalent of always-on agents ("d
 
 ```bash
 uv sync --dev
+chflags nohidden .venv/lib/python3.12/site-packages/*.pth   # macOS: Python skips hidden .pth files, so `import dot` fails outside pytest.
+# Re-run it after `uv sync` or a venv rebuild: the flag can come back, and then `import dot` fails again.
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src
 uv run pytest -q                 # offline; skips live, docker, db, openshell

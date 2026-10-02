@@ -446,6 +446,8 @@ scripted model, in memory, with the repository contract also run in Postgres.
 
 ## Phase 12: Second pack, `onboarding-ops` (4 days)
 
+Built 2026-10-02 ahead of order; see `docs/superpowers/specs/2026-10-02-onboarding-ops-design.md`. The drop location is a local folder, and runs start behind approval.
+
 - A pack that operates the recon workbench over its HTTP API: tools `list_runs`, `start_run(entity, file_ref)`, `get_run(run_id)` (read and write effects); **no tool that answers a gate**.
 - A sweep over a sponsor drop location with read-only credentials that classifies new files and starts runs.
 - A per-sponsor wiki seeded from the recon skills' business context; the daily digest reports runs by phase, blockers and ageing.

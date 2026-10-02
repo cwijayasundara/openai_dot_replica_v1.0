@@ -6,14 +6,14 @@ is in [`learning-loop.md`](learning-loop.md); the order of all work is in
 
 ## 1. Next phases (from the implementation plan)
 
-Phase 9 is next, and it gets its own plan.
+Phase 12 (`onboarding-ops`) was built ahead of order on 2026-10-02. Phase 9 is next, and its spec is approved; it gets its own plan.
 
 | Phase | Work | Size |
 |---|---|---|
 | 9 Connectors and tool discovery | K1 MCP; K2 discovery for large tool sets | 3 days |
 | 10 Evaluation and hardening | E1 scripted suites, E2 live task eval, E3 prompt-injection red team, E4 budgets and failure paths | 4 days |
 | 11 GCP deployment | I1 Terraform, I2 OpenShell gateway on GCE, I3 smoke and rollback | 4 days |
-| 12 Second pack | `onboarding-ops` | 4 days |
+| 12 Second pack | `onboarding-ops` | Done 2026-10-02 |
 
 E2 data also settles some open items: Flash vs `glm-5p3` for sweeps, and
 whether the replay gate needs repeated runs.

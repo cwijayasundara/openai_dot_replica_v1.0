@@ -48,6 +48,30 @@ Open [http://localhost:3000](http://localhost:3000). Locally, the web UI signs y
 
 To work on the UI with hot reload instead, run `cd web && pnpm install && pnpm dev`. That also serves on port 3000 and talks to the API on `localhost:8000`.
 
+## The onboarding-ops dot
+
+The `onboarding-ops` pack watches a local drop folder and operates the recon workbench ([`../recon_knowledge_work_agent_v2`](../recon_knowledge_work_agent_v2)) over its HTTP API. It never answers a gate: runs start only after you approve them.
+
+1. **Start the workbench** from its repo, on port 8100:
+
+   ```bash
+   scripts/start-backend.sh --port 8100
+   ```
+
+   Sponsors `sponsor-a` and `sponsor-b` are seeded by default.
+2. **Point the dot at it.** In `.env`, set `DOT_RECON_URL=http://host.docker.internal:8100`. If the workbench needs a token, add `"cred:recon"` to `DOT_CREDENTIAL_BINDINGS`. `DOT_RECON_DROP_ROOT` is set by compose; leave it empty in `.env`.
+3. **Rebuild the backend** so the containers pick up the settings: `docker compose up -d --build api worker scheduler` (step 2 above).
+4. **Create the dot.** In the web UI, choose `onboarding-ops` in the Pack select and press Create dot.
+5. **Drop a file** into a sponsor folder, creating it if needed. Compose mounts `./var/drops` read-only into `api` and `worker`:
+
+   ```bash
+   mkdir -p var/drops/sponsor-a && cp some-file.xlsx var/drops/sponsor-a/
+   ```
+
+What happens next: on weekdays during working hours in `DOT_SCHEDULE_TIMEZONE`, the intake sweep runs every 15 minutes (`*/15 7-22`), so within 15 minutes the dot records a finding for the new file. The intake pass follows (at 5, 20, 35 and 50 past the hour) and puts an approval card in front of you. Approving it starts the recon run. The status sweep runs hourly, and the daily digest at 08:45. Outside those hours or at weekends, the file waits for the next firing.
+
+There is no command or dev route to fire a schedule by hand: the API webhook (`POST /schedules/{dot_id}/{name}`) needs a Cloud Scheduler OIDC token. To try it quickly, wait for the next firing, or temporarily change the crons in `packs/onboarding-ops/pack.yaml` and restart `scheduler`.
+
 ## Day to day
 
 ```bash

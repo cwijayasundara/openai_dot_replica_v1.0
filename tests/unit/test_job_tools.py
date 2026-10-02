@@ -158,8 +158,8 @@ def test_check_update_cancel_and_list(rig: Rig) -> None:
     foreign = rig.store.create("dot-2", "researcher", "Not yours.", profile="chat", origin={})
     model = ScriptedChatModel(
         script=[
+            tools(call("update_job", job_id=job.job_id, message="Only 2026.")),
             tools(
-                call("update_job", job_id=job.job_id, message="Only 2026."),
                 call("check_job", job_id=job.job_id),
                 call("check_job", job_id=foreign.job_id),
                 call("cancel_job", job_id=foreign.job_id),
@@ -173,8 +173,10 @@ def test_check_update_cancel_and_list(rig: Rig) -> None:
     )
     rig.turn(model, enqueue(rig.repos, "dot-1", "web", {"text": "manage jobs"}, "chat"))
 
-    first = model.seen[1]
-    assert _results(first, "update_job") == [{"ok": True, "job_id": job.job_id, "status": "queued", "updates": 1}]
+    assert _results(model.seen[1], "update_job") == [
+        {"ok": True, "job_id": job.job_id, "status": "queued", "updates": 1}
+    ]
+    first = model.seen[2]
     mine, theirs = _results(first, "check_job")
     assert mine["status"] == "queued" and mine["last_update"] == "Only 2026."
     assert theirs == {"ok": False, "error": "no such job", "job_id": foreign.job_id}
@@ -183,8 +185,8 @@ def test_check_update_cancel_and_list(rig: Rig) -> None:
     listed, bogus = _results(first, "list_jobs")
     assert [j["job_id"] for j in listed["jobs"]] == [job.job_id]
     assert bogus["ok"] is False
-    assert _results(model.seen[2], "cancel_job")[-1]["status"] == "cancelled"
-    assert _results(model.seen[3], "update_job")[-1] == {"ok": False, "error": "job is cancelled", "job_id": job.job_id}
+    assert _results(model.seen[3], "cancel_job")[-1]["status"] == "cancelled"
+    assert _results(model.seen[4], "update_job")[-1] == {"ok": False, "error": "job is cancelled", "job_id": job.job_id}
 
 
 def test_a_job_round_trip_reports_back_in_the_originating_channel(rig: Rig) -> None:

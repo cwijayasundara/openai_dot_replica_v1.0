@@ -62,7 +62,7 @@ def prepare(repos: Repositories, dot: Dot, message: InboxMessage, settings: Sett
         schedule.max_tokens or settings.schedule_max_tokens,
     )
     if schedule.kind == "digest":
-        findings = open_for_digest(repos, dot.dot_id, schedule.findings_from)
+        findings = open_for_digest(repos, dot.dot_id, schedule.findings_from, own=schedule.name)
         if not findings:
             return None
         return ScheduledRun(schedule, budget, dot.thread_id, tuple(findings))

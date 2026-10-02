@@ -71,7 +71,7 @@ These are small, and the rules are enforced in code.
 
 - **`Schedule.findings_from: list[str] | None`** applies to digests only.
   - `None` keeps today's behaviour: every open finding.
-  - A list restricts the digest's snapshot to findings recorded by those schedules.
+  - A list restricts the digest's snapshot to findings recorded by those schedules, plus the digest's own open budget-stop finding, so a digest that overran its budget still reports it.
   - The loader checks that every name is a sweep in the same pack.
   - `proactive/findings.open_for_digest` takes the filter.
 - **Intake's findings are reported in an approval wait too.** In `proactive/runs.finish`, a digest whose turn ends paused at an approval also marks its snapshot reported. Without this, the next firing would propose the same file again, because only a reply marks findings reported today.

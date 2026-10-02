@@ -32,8 +32,9 @@ schedules:
   dot's own inbox, so it is a `read` effect.
 - **The digest.** It is skipped when nothing is open. Its request carries the
   open findings (up to 30, highest score first) as untrusted data. A digest
-  with `findings_from: [sweep, ...]` is shown only those sweeps' findings, so
-  two digests on one dot do not consume each other's. The
+  with `findings_from: [sweep, ...]` is shown only those sweeps' findings and
+  its own budget stop, so two digests on one dot do not consume each other's
+  and an overrun digest still reports itself. The
   Guardian's objective is the schedule's prompt, never the findings' text. The
   reply goes to the bound Slack channel (`dot link-slack --channel`) as a new
   message. With no channel bound, it stays in the web thread. After a turn

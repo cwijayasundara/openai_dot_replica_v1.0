@@ -18,6 +18,7 @@ from dot.jobs.store import MemoryJobStore
 from dot.packs.loader import REPO_ROOT, load_pack, seed_store
 from dot.persistence.db import ChannelBinding, Dot, Finding, InboxMessage, MemoryRepositories, User
 from dot.proactive.findings import OPEN, REPORTED, open_for_digest
+from dot.proactive.runs import prepare
 from dot.runtime.turns import InMemoryEventChannel
 from dot.runtime.worker import run_agent_turn
 from dot.tools.artifacts import ArtifactStore
@@ -317,3 +318,39 @@ def test_a_digest_that_ends_at_an_approval_marks_its_snapshot_reported(rig: Rig)
         rig.run("digest", model)
     assert rig.repos.list_dot_approvals(rig.dot.dot_id, "pending")
     assert [f.status for f in rig.repos.list_findings(rig.dot.dot_id)] == [REPORTED]
+
+
+def _onboarding_findings(repos: MemoryRepositories) -> dict[str, Finding]:
+    repos.create_user(User("u1", "Ada"))
+    repos.create_dot(Dot("dot-1", "u1", "onboarding-ops", "0", "dot-1", "active", WHEN))
+    rows = {
+        "sweep": ("intake-sweep", {"summary": "New file a.csv"}),
+        "own budget": ("intake", {"kind": "budget", "stops": 1}),
+        "own other": ("intake", {"summary": "not a budget stop"}),
+        "other budget": ("daily", {"kind": "budget", "stops": 1}),
+        "other sweep": ("status-sweep", {"summary": "Run run-1 waiting at brief"}),
+    }
+    return {
+        title: repos.insert_finding(Finding(0, "dot-1", schedule, title, evidence, 0.5, OPEN, WHEN))
+        for title, (schedule, evidence) in rows.items()
+    }
+
+
+def test_a_filtered_digest_also_sees_its_own_budget_stop() -> None:
+    repos = MemoryRepositories()
+    rows = _onboarding_findings(repos)
+    shown = open_for_digest(repos, "dot-1", ["intake-sweep"], own="intake")
+    assert sorted(f.title for f in shown) == ["own budget", "sweep"]
+    assert [f.title for f in open_for_digest(repos, "dot-1", ["intake-sweep"])] == ["sweep"]
+    assert len(open_for_digest(repos, "dot-1", None, own="intake")) == len(rows)
+
+
+def test_a_digest_runs_for_its_own_budget_stop_alone(tmp_path: Path) -> None:
+    repos = MemoryRepositories()
+    rows = _onboarding_findings(repos)
+    for title in ("sweep", "own other", "other budget", "other sweep"):
+        repos.update_finding(replace(rows[title], status=REPORTED))
+    settings = Settings(_env_file=None, object_root=str(tmp_path))  # type: ignore[call-arg]
+    message = InboxMessage(1, "dot-1", "schedule", {"schedule": "intake", "slot": "s"}, "intake", WHEN)
+    run = prepare(repos, repos.get_dot("dot-1"), message, settings)
+    assert run is not None and [f.title for f in run.findings] == ["own budget"]

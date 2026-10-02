@@ -130,7 +130,7 @@ export const api = {
   jobs: (id: string) => call<{ jobs: Job[] }>(`/dots/${id}/jobs`).then((r) => r.jobs),
   approvals: (id: string) => call<{ approvals: Approval[] }>(`/dots/${id}/approvals`).then((r) => r.approvals),
   findings: (id: string) => call<{ findings: Finding[] }>(`/dots/${id}/findings`).then((r) => r.findings),
-  memory: (id: string) => call<{ versions: MemoryVersion[] }>(`/dots/${id}/memory`).then((r) => r.versions),
+  memory: (id: string) => call<{ versions: MemoryVersion[]; can_act: boolean }>(`/dots/${id}/memory`),
   audit: (id: string, afterId = 0) =>
     call<{ events: AuditEvent[]; next_after_id: number | null }>(`/dots/${id}/audit?after_id=${afterId}&limit=200`),
   sandbox: (id: string, afterId = 0) =>

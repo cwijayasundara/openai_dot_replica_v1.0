@@ -97,10 +97,14 @@ function Diff({ diff }: { diff: string }) {
 export default function MemoryPage() {
   const { dotId, tick } = useLive();
   const [versions, setVersions] = useState<MemoryVersion[] | null>(null);
+  const [canAct, setCanAct] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    api.memory(dotId).then(setVersions, setError);
+    api.memory(dotId).then((r) => {
+      setVersions(r.versions);
+      setCanAct(r.can_act);
+    }, setError);
   }, [dotId, tick]);
 
   return (
@@ -135,10 +139,14 @@ export default function MemoryPage() {
                 <p className="text-sm text-muted">From episodes {version.episodes.join(", ")}</p>
               )}
               <Diff diff={version.diff} />
-              <Actions
-                version={version}
-                onDone={(updated) => setVersions((all) => all?.map((v) => (v.id === updated.id ? updated : v)) ?? null)}
-              />
+              {canAct && (
+                <Actions
+                  version={version}
+                  onDone={(updated) =>
+                    setVersions((all) => all?.map((v) => (v.id === updated.id ? updated : v)) ?? null)
+                  }
+                />
+              )}
             </li>
           ))}
         </ol>

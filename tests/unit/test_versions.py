@@ -55,6 +55,13 @@ class Rig:
         return self.repos.get_memory_version(version.id).status
 
 
+def test_the_memory_list_says_whether_the_viewer_can_act(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, monkeypatch)
+    assert rig.client.get(f"/dots/{rig.dot.dot_id}/memory").json()["can_act"] is True
+    rig.user[0] = "owner"  # the owner may view but is not an approver
+    assert rig.client.get(f"/dots/{rig.dot.dot_id}/memory").json()["can_act"] is False
+
+
 def test_accept_then_roll_back_restores_the_skill_exactly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rig = Rig(tmp_path, monkeypatch)
     original = rig.files.read(SKILL)

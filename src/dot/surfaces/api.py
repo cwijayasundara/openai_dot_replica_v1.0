@@ -290,9 +290,14 @@ def create_app(
 
     @app.get("/dots/{dot_id}/memory")
     def memory_versions(dot_id: str, request: Request) -> dict[str, Any]:
-        viewer(request, dot_id)
+        dot = viewer(request, dot_id)
         rows = surface.repos.list_memory_versions(dot_id)
-        return {"dot_id": dot_id, "versions": [memory_version_view(row, surface.runtime.redactor) for row in rows]}
+        return {
+            "dot_id": dot_id,
+            "versions": [memory_version_view(row, surface.runtime.redactor) for row in rows],
+            # What the page shows; the action route still refuses non-approvers.
+            "can_act": principal(request) in approvers(dot.pack_name),
+        }
 
     @contextmanager
     def dot_lock(dot_id: str) -> Iterator[None]:

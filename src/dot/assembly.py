@@ -60,6 +60,7 @@ from .tools.effects import Effect
 from .tools.native import native_registry
 from .tools.native.deps import ToolDeps
 from .tools.native.fetch import HttpxFetcher
+from .tools.native.recon_client import ReconClient
 from .tools.native.smtp import SmtpTransport
 from .tools.native.tavily import TavilySearch
 from .tools.registry import ToolRegistry
@@ -311,7 +312,20 @@ def default_tool_deps(settings: Settings, dot_id: str) -> ToolDeps:
             settings.smtp_sender,
             starttls=settings.smtp_starttls,
         )
-    return ToolDeps(dot_artifacts(settings, dot_id), search=search, fetcher=HttpxFetcher(), email=email)
+    recon = (
+        ReconClient(settings.recon_url, credentials=None, timeout_s=settings.recon_timeout_s)
+        if settings.recon_url
+        else None
+    )
+    drop_root = Path(settings.recon_drop_root) if settings.recon_drop_root else None
+    return ToolDeps(
+        dot_artifacts(settings, dot_id),
+        search=search,
+        fetcher=HttpxFetcher(),
+        email=email,
+        recon=recon,
+        drop_root=drop_root,
+    )
 
 
 def _tool_deps(dot: Dot, settings: Settings, runtime: GraphRuntime, deps: ToolDeps | None) -> ToolDeps:
@@ -323,7 +337,9 @@ def _tool_deps(dot: Dot, settings: Settings, runtime: GraphRuntime, deps: ToolDe
         if deps.credentials is not None
         else build_credential_broker(settings, runtime.redactor)
     )
-    return replace(deps, credentials=broker)
+    # The client reads its token through the redacting broker, like every other tool.
+    recon = deps.recon.with_credentials(broker) if isinstance(deps.recon, ReconClient) else deps.recon
+    return replace(deps, credentials=broker, recon=recon)
 
 
 def job_sandbox_key(job: Job) -> str:

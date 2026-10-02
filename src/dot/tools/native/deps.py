@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 from dot.tools.artifacts import ArtifactStore
+
+if TYPE_CHECKING:
+    from dot.tools.native.recon_client import ReconClient
 
 SMTP_CREDENTIAL = "cred:smtp"
 
@@ -57,3 +62,7 @@ class ToolDeps:
     credentials: CredentialBroker | None = None
     email: EmailTransport | None = None
     slack: SlackPoster | None = None
+    recon: ReconClient | None = None
+    drop_root: Path | None = None
+    # Files this dot was refused permission to start: (sponsor_id, file_name, sha256).
+    recon_declined: Callable[[], frozenset[tuple[str, str, str]]] | None = None

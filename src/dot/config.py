@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_sender: str | None = None
     smtp_starttls: bool = True
+    recon_url: str | None = None
+    recon_drop_root: str | None = None
+    recon_timeout_s: float = 30.0
     tavily_api_key: str | None = Field(default=None, repr=False)
     slack_mode: Literal["socket", "http"] = "socket"
     # Approvers added by this deployment, per pack: {"research-analyst": ["U123ABC"]}.

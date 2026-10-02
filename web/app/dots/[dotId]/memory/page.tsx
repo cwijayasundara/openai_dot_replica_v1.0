@@ -5,14 +5,74 @@ import { useEffect, useState } from "react";
 import { useLive } from "@/components/dot-live";
 import { ErrorNote } from "@/components/error-note";
 import { Time } from "@/components/time";
-import { api, type MemoryVersion } from "@/lib/api";
+import { ApiError, api, type MemoryVersion } from "@/lib/api";
 
 const STATUS: Record<string, string> = {
   proposed: "Proposed, waiting for replay",
   accepted: "Accepted",
   rejected: "Rejected by replay",
+  needs_review: "Held for your review",
+  discarded: "Discarded",
   rolled_back: "Rolled back",
 };
+
+type Action = "rollback" | "accept" | "discard";
+
+function Actions({ version, onDone }: { version: MemoryVersion; onDone: (updated: MemoryVersion) => void }) {
+  const { dotId } = useLive();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function act(action: Action) {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await api.memoryAction(dotId, version.id, action));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) setError("Only a pack approver can change the dot's memory.");
+      else setError(err instanceof Error ? err.message : "The change was not saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const buttons: { action: Action; label: string; primary?: boolean }[] =
+    version.status === "accepted"
+      ? [{ action: "rollback", label: "Roll back" }]
+      : version.status === "needs_review"
+        ? [
+            { action: "accept", label: "Accept", primary: true },
+            { action: "discard", label: "Discard" },
+          ]
+        : [];
+  if (buttons.length === 0) return null;
+  return (
+    <div className="mt-3">
+      {error && (
+        <p role="alert" className="mb-2 text-sm text-bad">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        {buttons.map(({ action, label, primary }) => (
+          <button
+            key={action}
+            type="button"
+            disabled={busy}
+            onClick={() => void act(action)}
+            className={
+              primary
+                ? "rounded-md bg-dot px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+                : "rounded-md border border-rule bg-white px-3 py-1 text-sm disabled:opacity-50"
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function lineClass(line: string): string {
   if (line.startsWith("+++") || line.startsWith("---")) return "text-muted";
@@ -68,10 +128,17 @@ export default function MemoryPage() {
                 </span>
               </div>
               {version.detail.rationale && <p className="mt-1 max-w-prose">{version.detail.rationale}</p>}
+              {version.detail.gate && (
+                <p className="text-sm text-muted">Replay: {version.detail.gate.reason}</p>
+              )}
               {version.episodes.length > 0 && (
                 <p className="text-sm text-muted">From episodes {version.episodes.join(", ")}</p>
               )}
               <Diff diff={version.diff} />
+              <Actions
+                version={version}
+                onDone={(updated) => setVersions((all) => all?.map((v) => (v.id === updated.id ? updated : v)) ?? null)}
+              />
             </li>
           ))}
         </ol>

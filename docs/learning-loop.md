@@ -11,7 +11,7 @@ be rolled back.
 | L1 Episodes | `safety/approvals.py`, `memory/episodes.py` | none | `episodes` |
 | L2 Reflection | `memory/reflection.py` | `fast` | `memory_versions` rows marked `proposed` |
 | L3 Replay gate | `memory/replay.py`, `memory/compare.py` | `supervisor` | The verdict; accepted edits to the store |
-| L4 Versions | `memory/versions.py` | none | `memory_versions`, the store |
+| L4 Versions | `memory/versions.py` | none | `memory_versions`, the store, `audit_log` |
 
 The model proposes edits. Code decides which ones are kept: replay and a fixed
 rule. A human can roll any edit back.
@@ -259,7 +259,9 @@ result, and the episodes that could not be replayed, with why:
 An accepted edit is written to the store first, then the row is updated with
 the diff as judged. If the row update fails, the edit is in memory but the
 row still says `proposed`. The next gate then rejects it as a stale base,
-because its `find` text is gone, and does not apply it twice.
+because its `find` text is gone or its `replace` text is already in the file
+(an edit that keeps its `find`, such as appending a line), and does not apply
+it twice.
 
 ## L4. Versions and rollback
 
@@ -267,24 +269,57 @@ because its `find` text is gone, and does not apply it twice.
 row per edit that passed reflection's checks (migration 006 adds `detail`):
 
 - `proposed`: drafted by reflection, not yet replayed;
-- `accepted`: passed the gate and applied;
-- `rejected`: failed the gate;
-- `needs_review`: nothing to replay against;
-- `rolled_back`: an accepted edit a human has undone.
+- `accepted`: applied, by the gate or by an approver;
+- `rejected`: failed the gate, or no longer applied to the file (`stale_base`);
+- `needs_review`: the gate had nothing to replay, so it waits for an approver;
+- `discarded`: an approver turned down a `needs_review` edit;
+- `rolled_back`: an accepted edit an approver has undone.
 
-The replay results are attached to the row. Applying an edit happens under the
-dot's lock:
+`memory/versions.py` owns every change of status after reflection. When an
+edit is applied, its row keeps what rollback needs: the whole prior file
+(`detail.before`, absent if the edit created the file) and the SHA-256 of the
+file it wrote (`detail.after_sha256`). The API view leaves `before` out.
 
-1. Re-read the store value. If it no longer matches the value the diff was
-   made against (compared by hash), mark the edit `rejected` with
-   `stale_base`.
-2. Write the new value and insert the row in one step. If the store write
-   fails, nothing is recorded as accepted.
+**Approver actions.** `POST /dots/{dot_id}/memory/{version_id}/{action}`, for
+pack approvers only (401 without an identity, 403 otherwise):
 
-Rollback reverse-applies the version's diff to the current value. It refuses
-with a conflict if a later accepted edit touched the same lines. The UI shows
-each accepted edit's diff, cited episodes and replay results, with a rollback
-button. Rollback is an approver action and is audited.
+| Action | From | Does |
+|---|---|---|
+| `accept` | `needs_review` | Re-applies the edit to the file as it is now, with all of reflection's checks, and writes it. If it no longer applies: 409, nothing changes |
+| `discard` | `needs_review` | Marks it `discarded`; memory is untouched |
+| `rollback` | `accepted` | Undoes the edit (below) |
+
+**Rollback.** If the file still has the hash the edit wrote, nothing has
+changed it since, so the prior file is restored exactly, or removed if the
+edit created it. Otherwise the edit's own `replace` text is swapped back for
+its `find` text, which needs that text to still be in the file exactly once.
+Other edits since then are kept. It is a 409 when the text is gone (a later
+edit rewrote it), or when a newer accepted edit to the same file has this
+edit's text inside its `find`: that edit is built on this one, and swapping
+this one back would leave it impossible to roll back. Roll back newest first.
+
+**Rules enforced in code.**
+
+- An action runs under the worker's per-dot advisory lock. If a turn or the
+  gate holds it, the action answers 409 "the dot is busy" and changes
+  nothing.
+- The row's new status and an audit event (`kind=memory`, `decision` =
+  `accept`, `discard` or `rollback`, the actor, the version and path) are
+  written in one transaction, and only if the row is still in the status
+  the action expects. A repeated or concurrent action gets 409 and writes no
+  second audit event.
+- The store is written before the row. If the row write then fails, the
+  file has changed but the row has not. The next action or gate finds the
+  edit already in the file, or its `find` text gone, and refuses, rather
+  than applying anything twice.
+- Rows the gate accepted before rollback support existed have no `before`
+  or `after_sha256`; their rollback always uses the text swap.
+- Gate verdicts are code, not human actions, so they are not audited. Their
+  reasons and replay results are in `detail.gate`.
+
+The web memory page shows each version's status, rationale, replay reason
+and diff, with **Accept** and **Discard** on held edits and **Roll back** on
+accepted ones.
 
 ## Settings
 
@@ -311,8 +346,15 @@ These are all offline, with the scripted model.
   current memory, plus a cited edit episode. Propose an edit that changes
   `to` behaviour. The candidate loses approved matches, so the edit is
   `rejected`, and the store is unchanged.
-- **Rollback.** Accept an edit, then roll it back. The store value equals
-  the previous value byte for byte, and the row is `rolled_back`.
+- **Rollback** (the acceptance test, and `tests/unit/test_versions.py`).
+  After the accepted preference, rollback removes `AGENTS.md` and the next
+  draft is long again. A skill edit rolls back to the prior file byte for
+  byte. A rollback after an unrelated later edit swaps back only its own
+  text; one whose text a later edit rewrote is refused with 409 until the
+  later edit is rolled back. Held edits can be accepted or discarded, a stale
+  accept is refused, every action is audited once, and only approvers may
+  act. On Postgres, an action waits for the dot's lock (409 while a turn
+  holds it).
 - **Replay writes nothing.** Repository tables and the dot's checkpoints are
   identical before and after a replay. Transports raise if called.
 - **Unreplayable episodes.** A job episode, a missing checkpoint and a

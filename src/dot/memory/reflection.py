@@ -89,7 +89,7 @@ class MemoryEdit:
 
     @property
     def base_sha256(self) -> str | None:
-        return _sha256(self.before) if self.before is not None else None
+        return sha256(self.before) if self.before is not None else None
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,10 @@ class MemoryFiles:
     def write(self, path: str, text: str) -> None:
         namespace, key = self._locate(path)
         self._store.put(namespace, key, dict(create_file_data(text)), index=False)
+
+    def delete(self, path: str) -> None:
+        namespace, key = self._locate(path)
+        self._store.delete(namespace, key)
 
     def listing(self) -> dict[str, str]:
         files: dict[str, str] = {}
@@ -312,5 +316,5 @@ def _clip(value: Any) -> Any:
     return value
 
 
-def _sha256(text: str) -> str:
+def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

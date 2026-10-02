@@ -26,8 +26,8 @@ from dot.assembly import GraphRuntime, build_dot_agent, dot_artifacts
 from dot.config import Settings
 from dot.memory.compare import Expectation, expectation
 from dot.memory.episodes import ReplayPoint, Unreplayable, replay_point
-from dot.memory.reflection import DraftEdit, MemoryEdit, MemoryFiles, check_edit
-from dot.memory.versions import record_verdict
+from dot.memory.reflection import MemoryEdit, MemoryFiles
+from dot.memory.versions import record_verdict, recorded_edit
 from dot.middleware.replay import ReplayStop
 from dot.packs.loader import REPO_ROOT, load_pack
 from dot.persistence.db import Dot, Episode, Json, MemoryVersion, Repositories
@@ -118,7 +118,7 @@ class ReplayGate:
 
     def judge(self, version: MemoryVersion) -> GateResult:
         files = MemoryFiles(self.runtime.store, self.dot.dot_id).listing()
-        edit = self._rebase(version, files)
+        edit = recorded_edit(version, files, self.runtime.redactor)
         if isinstance(edit, str):
             return GateResult("rejected", f"stale_base: {edit}")
         cited, skipped = self._points([self.repos.get_episode(n) for n in version.episodes], self.settings.replay_cited)
@@ -151,21 +151,6 @@ class ReplayGate:
         if not improved:
             return GateResult("rejected", "no cited episode improved", edit, tuple(results), unreplayable)
         return GateResult("accepted", f"matches {baseline} -> {after}", edit, tuple(results), unreplayable)
-
-    def _rebase(self, version: MemoryVersion, files: dict[str, str]) -> MemoryEdit | str:
-        """The edit applied to memory as it is now; an earlier accepted edit may have changed the file."""
-        detail = version.detail
-        if not all(isinstance(detail.get(key), str) for key in ("path", "find", "replace")):
-            return "the version does not record its edit"
-        draft = DraftEdit(
-            path=detail["path"],
-            find=detail["find"],
-            replace=detail["replace"],
-            rationale=str(detail.get("rationale") or "-"),
-            episode_ids=version.episodes or [0],
-        )
-        checked = check_edit(draft, files, set(draft.episode_ids), self.runtime.redactor)
-        return checked if isinstance(checked, MemoryEdit) else checked.reason
 
     def _points(
         self, episodes: list[Episode], limit: int

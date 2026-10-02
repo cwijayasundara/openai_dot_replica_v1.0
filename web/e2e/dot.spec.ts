@@ -54,6 +54,19 @@ test("one thread across Slack and the web: message, job, approval, audit", async
   await reply.getByRole("button", { name: "Save correction" }).click();
   await expect(reply).toContainText("Correction noted.");
 
+  // An edit the replay gate held for review: accept it, then roll it back.
+  const dotId = /\/dots\/(dot-[^/]+)/.exec(page.url())![1];
+  expect((await request.post(`${E2E_API}/__e2e/memory/${dotId}`)).status()).toBe(201);
+  await page.getByRole("link", { name: "Memory" }).click();
+  const held = page.getByTestId("memory-version");
+  await expect(held).toContainText("Held for your review");
+  await expect(held).toContainText("Replay: no cited episode can be replayed");
+  await held.getByRole("button", { name: "Accept" }).click();
+  await expect(held).toContainText("Accepted");
+  await held.getByRole("button", { name: "Roll back" }).click();
+  await expect(held).toContainText("Rolled back");
+  await expect(held.getByRole("button")).toHaveCount(0);
+
   await page.getByRole("link", { name: "Audit trail" }).click();
   const rows = page.getByTestId("audit-row");
   // The Guardian reviews the proposal, then the edited arguments again.

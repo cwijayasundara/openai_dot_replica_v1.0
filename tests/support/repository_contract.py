@@ -17,6 +17,7 @@ from dot.persistence.db import (
     Finding,
     InboxMessage,
     Job,
+    MemoryConflict,
     MemoryVersion,
     NotFound,
     Repositories,
@@ -141,6 +142,15 @@ def exercise(repos: Repositories) -> None:
     )
     assert repos.get_memory_version(version.id).status == "accepted"
     assert repos.get_memory_version(version.id).detail == {"reason": "replay"}
+    action = AuditEvent(0, "d1", WHEN, "reviewer", "memory", decision="rollback", detail={"version": version.id})
+    rolled = MemoryVersion(version.id, "d1", WHEN, "--- a\n+++ b", [episode.id], "rolled_back", {"reason": "r"})
+    repos.transition_memory_version(rolled, "accepted", action)
+    assert repos.get_memory_version(version.id).status == "rolled_back"
+    assert [e.decision for e in repos.list_audit("d1") if e.kind == "memory"] == ["rollback"]
+    with pytest.raises(MemoryConflict):
+        repos.transition_memory_version(replace(rolled, status="accepted"), "accepted", action)
+    assert repos.get_memory_version(version.id).status == "rolled_back"
+    assert len([e for e in repos.list_audit("d1") if e.kind == "memory"]) == 1
     newer = repos.insert_memory_version(MemoryVersion(0, "d1", WHEN.replace(hour=13), "+x", [], "proposed"))
     assert [v.id for v in repos.list_memory_versions("d1")] == [newer.id, version.id]
 

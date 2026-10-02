@@ -57,6 +57,10 @@ class ApprovalConflict(Exception):
     """A review was already decided or no longer belongs to a paused run."""
 
 
+class MemoryConflict(Exception):
+    """A memory version is no longer in the state an action expects, or its file moved on."""
+
+
 @dataclass(frozen=True)
 class User:
     user_id: str
@@ -265,6 +269,10 @@ class Repositories(Protocol):
         """Newest first."""
         ...
 
+    def transition_memory_version(self, version: MemoryVersion, expected: str, audit: AuditEvent) -> None:
+        """Store ``version`` and its audit row together, if the row's status is still ``expected``."""
+        ...
+
     def bind_channel(self, binding: ChannelBinding) -> None: ...
     def get_channel(self, dot_id: str, channel: str) -> ChannelBinding: ...
     def update_channel(self, binding: ChannelBinding) -> None: ...
@@ -324,6 +332,7 @@ class MemoryRepositories:
                 self.inbox,
                 self.dots,
                 self.jobs,
+                self.memory_versions,
             ]
             snapshots = [dict(table) for table in tables]
             try:
@@ -635,6 +644,13 @@ class MemoryRepositories:
         self.get_dot(dot_id)
         rows = [v for v in self.memory_versions.values() if v.dot_id == dot_id]
         return sorted(rows, key=lambda v: (v.at, v.id), reverse=True)
+
+    def transition_memory_version(self, version: MemoryVersion, expected: str, audit: AuditEvent) -> None:
+        with self._approval_transaction():
+            if self.get_memory_version(version.id).status != expected:
+                raise MemoryConflict(f"memory version {version.id} is no longer {expected}")
+            self.memory_versions[version.id] = version
+            self.append_audit(audit)
 
     def bind_channel(self, binding: ChannelBinding) -> None:
         self.get_dot(binding.dot_id)
@@ -1290,6 +1306,17 @@ class PostgresRepositories:
                 "SELECT id FROM memory_versions WHERE dot_id = %s ORDER BY at DESC, id DESC", (dot_id,)
             ).fetchall()
         return [self.get_memory_version(int(row[0])) for row in ids]
+
+    def transition_memory_version(self, version: MemoryVersion, expected: str, audit: AuditEvent) -> None:
+        with self.pool.connection() as conn, conn.transaction():
+            row = conn.execute(
+                "UPDATE memory_versions SET diff = %s, status = %s, detail = %s"
+                " WHERE id = %s AND dot_id = %s AND status = %s RETURNING id",
+                (version.diff, version.status, Jsonb(version.detail), version.id, version.dot_id, expected),
+            ).fetchone()
+            if row is None:
+                raise MemoryConflict(f"memory version {version.id} is no longer {expected}")
+            _insert_audit(conn, audit)
 
     def bind_channel(self, binding: ChannelBinding) -> None:
         with self.pool.connection() as conn:

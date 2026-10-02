@@ -15,6 +15,7 @@ from dot.config import Settings
 from dot.memory.compare import Expectation, args_match, expectation
 from dot.memory.reflection import AGENTS_PATH, MemoryFiles, run_reflection
 from dot.memory.replay import gate_proposed
+from dot.memory.versions import rollback
 from dot.packs.loader import REPO_ROOT, load_pack
 from dot.packs.schema import Schedule
 from dot.persistence.db import Dot, Episode, MemoryRepositories, MemoryVersion
@@ -89,9 +90,11 @@ class Rig:
         self.turn("Email Sam the brief")
         card = self.pending()
         decide(self.repos, card.approval_id, "reviewer", decision)
-        resume = next(m for m in self.repos.inbox.values() if m.source == "approval" and m.done_at is None)
-        self._run([resume])
+        self.resume()
         return max(self.repos.episodes)
+
+    def resume(self) -> None:
+        self._run([next(m for m in self.repos.inbox.values() if m.source == "approval" and m.done_at is None)])
 
     def shortened(self) -> int:
         edited = {"to": "sam@example.com", "subject": "Brief", "body": SHORT}
@@ -146,7 +149,17 @@ def test_a_preference_that_matches_the_human_is_accepted_and_the_next_draft_foll
     assert (rig.tables(), rig.checkpoints(), list(rig.email.sent), len(rig.model.structured_seen)) == before
 
     rig.turn("Email Sam the next brief")
-    assert rig.pending().args["body"] == SHORT
+    card = rig.pending()
+    assert card.args["body"] == SHORT
+
+    # Rollback restores the prior memory: AGENTS.md did not exist, so it is removed.
+    decide(rig.repos, card.approval_id, "reviewer", ReviewDecision(type="reject"))
+    rig.resume()
+    rolled = rollback(rig.repos, rig.files, rig.repos.get_memory_version(version.id), "reviewer", rig.runtime.redactor)
+    assert rolled.status == "rolled_back"
+    assert rig.files.read(AGENTS_PATH) is None
+    rig.turn("Email Sam once more")
+    assert rig.pending().args["body"] == LONG
 
 
 def test_an_edit_that_breaks_approved_behaviour_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

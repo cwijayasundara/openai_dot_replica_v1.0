@@ -7,19 +7,32 @@ import json
 import os
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import Request
+from fastapi.testclient import TestClient
 from psycopg_pool import ConnectionPool
 
 from dot.assembly import build_graph_runtime
 from dot.config import Settings
-from dot.persistence.db import PostgresRepositories, Repositories, make_pool, migrate, open_repositories
+from dot.memory.reflection import AGENTS_PATH, MemoryFiles
+from dot.persistence.db import (
+    MemoryVersion,
+    PostgresRepositories,
+    Repositories,
+    make_pool,
+    migrate,
+    open_repositories,
+)
+from dot.runtime.locks import DotLocks
 from dot.runtime.turns import PgEventChannel, TurnEvent
 from dot.runtime.worker import Worker, run_agent_turn
 from dot.surfaces.api import create_app
 from dot.surfaces.cli import iter_tail
+from dot.surfaces.dots import create_dot
 from dot.tools.artifacts import ArtifactStore
 from dot.tools.native.deps import Hit, ToolDeps
 from tests.support.scripted_model import ScriptedChatModel, call, say, tools
@@ -192,3 +205,35 @@ def test_tail_prints_a_live_event(pool: ConnectionPool) -> None:
     payloads = list(iter_tail(url, "dot-a", timeout_s=2, on_listen=on_listen))
     assert payloads
     assert payloads[0]["detail"]["text"] == "tail me"
+
+
+def test_memory_actions_wait_for_the_dots_lock(
+    tmp_path: Path, pool: ConnectionPool, repos: Repositories, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dot.surfaces.api.approvers", lambda _: ["reviewer"])
+    url = os.environ["DOT_DATABASE_URL"]
+    settings = Settings(_env_file=None, database_url=url, object_root=str(tmp_path / "objects"))  # type: ignore[call-arg]
+    runtime = build_graph_runtime(settings)
+    dot = create_dot(repos, runtime, "research-analyst", "owner")
+    detail = {"path": AGENTS_PATH, "find": "", "replace": "- Keep emails short.\n", "rationale": "r"}
+    version = repos.insert_memory_version(
+        MemoryVersion(0, dot.dot_id, datetime.now(UTC), "", [], "needs_review", detail)
+    )
+    app = create_app(settings, repos=repos, runtime=runtime, model=ScriptedChatModel(script=[]))
+
+    @app.middleware("http")
+    async def trusted_identity(request: Request, call_next):  # type: ignore[no-untyped-def]
+        request.state.user_id = "reviewer"
+        return await call_next(request)
+
+    worker_locks = DotLocks(pool)
+    assert worker_locks.try_acquire(dot.dot_id)  # a turn is running
+    with TestClient(app) as client:
+        busy = client.post(f"/dots/{dot.dot_id}/memory/{version.id}/accept")
+        assert busy.status_code == 409 and "busy" in busy.json()["detail"]
+        assert repos.get_memory_version(version.id).status == "needs_review"
+        worker_locks.release(dot.dot_id)
+        assert client.post(f"/dots/{dot.dot_id}/memory/{version.id}/accept").json()["status"] == "accepted"
+    assert MemoryFiles(runtime.store, dot.dot_id).read(AGENTS_PATH) == "- Keep emails short.\n"
+    assert [e.decision for e in repos.list_audit(dot.dot_id) if e.kind == "memory"] == ["accept"]
+    runtime.close()

@@ -85,5 +85,6 @@ def memory_version_view(version: MemoryVersion, redactor: Redactor) -> Json:
         "diff": redactor.text(version.diff),
         "episodes": version.episodes,
         "status": version.status,
-        "detail": redactor.content(version.detail),
+        # "before" is the whole prior file, kept for rollback; the diff already shows the change.
+        "detail": redactor.content({k: v for k, v in version.detail.items() if k != "before"}),
     }

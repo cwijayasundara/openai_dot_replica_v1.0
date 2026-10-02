@@ -77,7 +77,11 @@ export type MemoryVersion = {
   episodes: number[];
   status: string;
   // The file, the rationale, and later the replay results.
-  detail: { path?: string; rationale?: string } & Record<string, unknown>;
+  detail: {
+    path?: string;
+    rationale?: string;
+    gate?: { reason: string; results: { episode: number; arm: string; match: boolean; stop: string }[] };
+  } & Record<string, unknown>;
 };
 
 export type Decision =
@@ -135,6 +139,8 @@ export const api = {
     ),
   correct: (id: string, messageId: string, text: string) =>
     call<{ episode_id: number }>(`/dots/${id}/corrections`, post({ message_id: messageId, text })),
+  memoryAction: (id: string, versionId: number, action: "rollback" | "accept" | "discard") =>
+    call<MemoryVersion>(`/dots/${id}/memory/${versionId}/${action}`, post({})),
   decide: (approvalId: string, decision: Decision) =>
     call<{ status: string }>(`/approvals/${approvalId}`, post(decision)),
 };

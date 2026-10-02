@@ -32,7 +32,7 @@ from dot.config import Settings
 from dot.jobs.runner import JobRunner, run_job
 from dot.jobs.store import MemoryJobStore
 from dot.middleware.redaction import Redactor
-from dot.persistence.db import Dot, InboxMessage, MemoryRepositories
+from dot.persistence.db import Dot, InboxMessage, MemoryRepositories, MemoryVersion
 from dot.runtime.router import message_detail
 from dot.runtime.turns import InMemoryEventChannel, TurnEvent
 from dot.runtime.worker import run_agent_turn
@@ -212,6 +212,22 @@ def build(story: Story) -> FastAPI:
     @app.post("/__e2e/slack", status_code=202)
     def slack(body: SlackBody) -> dict[str, int]:
         return {"inbox_id": story.slack_dm(body.text).id}
+
+    @app.post("/__e2e/memory/{dot_id}", status_code=201)
+    def held_edit(dot_id: str) -> dict[str, int]:
+        """An edit the replay gate held for review, as if last night's reflection had drafted it."""
+        detail = {
+            "path": "/memories/AGENTS.md",
+            "find": "",
+            "replace": "- Keep emails short.\n",
+            "rationale": "Sam's emails were always cut short.",
+            "gate": {"reason": "no cited episode can be replayed", "results": [], "unreplayable": []},
+        }
+        diff = "--- /dev/null\n+++ /memories/AGENTS.md\n@@ -0,0 +1 @@\n+- Keep emails short.\n"
+        version = story.repos.insert_memory_version(
+            MemoryVersion(0, dot_id, datetime.now(UTC), diff, [], "needs_review", detail)
+        )
+        return {"id": version.id}
 
     @app.get("/__e2e/sent")
     def sent() -> dict[str, list[str]]:

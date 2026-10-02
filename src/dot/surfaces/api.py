@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -21,10 +21,13 @@ from dot.assembly import GraphRuntime, build_dot_agent, build_graph_runtime
 from dot.config import Settings, get_settings
 from dot.jobs.store import JobStore, MemoryJobStore, PostgresJobStore
 from dot.memory.episodes import CorrectionBody, record_correction
+from dot.memory.reflection import MemoryFiles
+from dot.memory.versions import accept_reviewed, discard, rollback
 from dot.packs.loader import REPO_ROOT, PackLoadError, load_pack
 from dot.persistence.db import (
     ApprovalConflict,
     Dot,
+    MemoryConflict,
     MemoryRepositories,
     NotFound,
     PostgresRepositories,
@@ -32,6 +35,7 @@ from dot.persistence.db import (
     open_repositories,
 )
 from dot.proactive.scheduler import trigger
+from dot.runtime.locks import DotLocks
 from dot.runtime.turns import EventKind, InMemoryEventChannel, PgEventChannel, TurnEvent
 from dot.safety.approvals import ReviewDecision, approvers, decide
 from dot.surfaces.dots import create_dot, dot_view, post_message, read_thread
@@ -286,6 +290,48 @@ def create_app(
         viewer(request, dot_id)
         rows = surface.repos.list_memory_versions(dot_id)
         return {"dot_id": dot_id, "versions": [memory_version_view(row, surface.runtime.redactor) for row in rows]}
+
+    @contextmanager
+    def dot_lock(dot_id: str) -> Iterator[None]:
+        """The worker's per-dot lock, so a memory action never interleaves with a turn or the gate."""
+        if not isinstance(surface.repos, PostgresRepositories):
+            yield
+            return
+        locks = DotLocks(surface.repos.pool)
+        if not locks.try_acquire(dot_id):
+            raise HTTPException(409, "the dot is busy; try again shortly")
+        try:
+            yield
+        finally:
+            locks.release(dot_id)
+
+    @app.post("/dots/{dot_id}/memory/{version_id}/{action}")
+    def memory_action(
+        dot_id: str, version_id: int, action: Literal["rollback", "accept", "discard"], request: Request
+    ) -> dict[str, Any]:
+        """Approvers roll back an accepted edit, or settle one the gate held for review."""
+        user_id = principal(request)
+        if user_id is None:
+            raise HTTPException(401, "authenticated identity required")
+        dot = surface.repos.get_dot(dot_id)
+        if user_id not in approvers(dot.pack_name):
+            raise HTTPException(403, "only a pack approver may change the dot's memory")
+        files = MemoryFiles(surface.runtime.store, dot_id)
+        redactor = surface.runtime.redactor
+        with dot_lock(dot_id):
+            version = surface.repos.get_memory_version(version_id)
+            if version.dot_id != dot_id:
+                raise NotFound("memory_versions", str(version_id))
+            try:
+                if action == "rollback":
+                    version = rollback(surface.repos, files, version, user_id, redactor)
+                elif action == "accept":
+                    version = accept_reviewed(surface.repos, files, version, user_id, redactor)
+                else:
+                    version = discard(surface.repos, version, user_id, redactor)
+            except MemoryConflict as exc:
+                raise HTTPException(409, str(exc)) from exc
+        return memory_version_view(version, redactor)
 
     @app.post("/schedules/{dot_id}/{name}", status_code=202)
     def schedule_run(dot_id: str, name: str, request: Request) -> dict[str, Any]:

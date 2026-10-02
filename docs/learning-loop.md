@@ -82,9 +82,11 @@ no budget, and its `prompt` says what to learn:
    prompt: "Learn how this user wants research, briefs and emails done."}
 ```
 
-Its inbox row carries the placeholder profile `reflection`. The worker runs
-it under the dot's lock, like any schedule row, but runs no agent and touches
-no thread. A paused dot's reflection waits until the dot is unpaused. One run
+Its inbox row carries the placeholder profile `reflection`. The worker's
+learning lane, a second inbox loop on its own thread, runs it under the dot's
+lock but runs no agent and touches no thread. The turn loop never claims a
+reflection row, so one dot's gate does not delay another dot's turn. The dot's
+own messages wait for its lock, like any turn. A paused dot's reflection waits until the dot is unpaused. One run
 (`memory/reflection.py`):
 
 1. Loads the oldest episodes after the dot's cursor, at most

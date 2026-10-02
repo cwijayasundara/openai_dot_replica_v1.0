@@ -7,7 +7,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -32,6 +32,7 @@ from dot.memory.episodes import PROFILE_METADATA_KEY
 from dot.memory.reflection import run_reflection
 from dot.memory.replay import gate_proposed
 from dot.middleware.guardian import GUARDIAN_INSTRUCTION_KEY
+from dot.packs.schema import REFLECTION_PROFILE
 from dot.persistence.db import Dot, InboxMessage, Json, PostgresRepositories, Repositories, make_pool, migrate
 from dot.proactive import runs as scheduled_runs
 from dot.proactive.runs import ScheduledRun
@@ -47,6 +48,11 @@ _SLACK_REF_KEYS = frozenset({"channel", "thread_ts"})
 # Rows that run as a turn of their own: a resume, and a schedule with its own budget.
 _ALONE = ("approval", "schedule")
 
+Lane = Literal["turns", "learning"]
+# A reflection row: nightly reflection and its replay gate. Each runs on its own lane, so one
+# dot's gate (about 100 replay calls) never delays another dot's turn.
+_REFLECTION_ROW = "(inbox.source = 'schedule' AND inbox.profile = %s)"
+
 TurnRunner = Callable[[Dot, str, Sequence[InboxMessage], EventChannel], None]
 
 
@@ -57,12 +63,16 @@ class Worker:
         repos: Repositories,
         events: EventChannel,
         runner: TurnRunner,
+        *,
+        lane: Lane = "turns",
     ) -> None:
         self._pool = pool
         self._repos = repos
         self._events = events
         self._runner = runner
         self._locks = DotLocks(pool)
+        # Built from constants only; the profile is bound as a parameter.
+        self._lane_sql = f"AND {'' if lane == 'learning' else 'NOT '}{_REFLECTION_ROW}"
 
     def run_once(self) -> bool:
         """Claim one dot and run one turn. False when nothing is runnable."""
@@ -89,16 +99,17 @@ class Worker:
     def _peek(self, skipped: set[str]) -> str | None:
         with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             row = cur.execute(
-                """
+                f"""
                 SELECT dot_id FROM inbox
                 WHERE done_at IS NULL AND claimed_at IS NULL
                   AND (source = 'approval' OR NOT EXISTS (
                       SELECT 1 FROM dots WHERE dots.dot_id = inbox.dot_id AND dots.status = 'paused'))
+                  {self._lane_sql}
                   AND NOT (dot_id = ANY(%s::text[]))
                 ORDER BY created_at, id
                 LIMIT 1
                 """,
-                (list(skipped),),
+                (REFLECTION_PROFILE, list(skipped)),
             ).fetchone()
         if row is None:
             return None
@@ -112,15 +123,16 @@ class Worker:
         """
         with self._pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
-                """
+                f"""
                 SELECT id, profile, source FROM inbox
                 WHERE dot_id = %s AND done_at IS NULL AND claimed_at IS NULL
                   AND (source = 'approval' OR NOT EXISTS (
                       SELECT 1 FROM dots WHERE dots.dot_id = inbox.dot_id AND dots.status = 'paused'))
+                  {self._lane_sql}
                 ORDER BY created_at, id
                 FOR UPDATE SKIP LOCKED
                 """,
-                (dot_id,),
+                (dot_id, REFLECTION_PROFILE),
             ).fetchall()
             ids: list[int] = []
             profile: str | None = None
@@ -295,21 +307,35 @@ def serve(settings: Settings | None = None) -> None:
         ]
         for thread in job_threads:
             thread.start()
-        runtime = build_graph_runtime(settings)
-        runtime.audit_repositories = repos
-        runtime.jobs = store
+        learning = threading.Thread(
+            target=_serve_lane, args=(settings, pool, repos, store, stop, "learning"), name="learning", daemon=True
+        )
+        learning.start()
         try:
-            worker = Worker(pool, repos, _events(pool), _agent_runner(settings, runtime))
-            while not stop.is_set():
-                if not worker.run_once():
-                    stop.wait(_IDLE_WAIT_S)
+            _serve_lane(settings, pool, repos, store, stop, "turns")
         finally:
             stop.set()
-            runtime.close()
+            learning.join()
             for thread in job_threads:
                 thread.join()
     finally:
         pool.close()
+
+
+def _serve_lane(
+    settings: Settings, pool: ConnectionPool, repos: Repositories, store: JobStore, stop: threading.Event, lane: Lane
+) -> None:
+    """One inbox loop. The graph runtime and the lock table are per thread; neither is thread-safe."""
+    runtime = build_graph_runtime(settings)
+    runtime.audit_repositories = repos
+    runtime.jobs = store
+    try:
+        worker = Worker(pool, repos, _events(pool), _agent_runner(settings, runtime), lane=lane)
+        while not stop.is_set():
+            if not worker.run_once():
+                stop.wait(_IDLE_WAIT_S)
+    finally:
+        runtime.close()
 
 
 def _events(pool: ConnectionPool) -> EventChannel:

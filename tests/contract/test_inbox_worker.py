@@ -14,7 +14,9 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
+from dot.packs.schema import REFLECTION_PROFILE
 from dot.persistence.db import Dot, InboxMessage, Repositories, User, make_pool, migrate, open_repositories
+from dot.proactive.scheduler import trigger
 from dot.runtime.router import enqueue
 from dot.runtime.turns import EventChannel, InMemoryEventChannel, PgEventChannel, TurnEvent
 from dot.runtime.worker import Worker
@@ -221,3 +223,48 @@ def test_pg_event_channel_notifies_listeners(pool: ConnectionPool) -> None:
         notice = next(conn.notifies(timeout=2))
     body = json.loads(notice.payload)
     assert body == {"dot_id": "dot-a", "kind": "error", "detail": {"error": "model down"}}
+
+
+def test_reflection_runs_on_the_learning_lane_and_never_delays_another_dot(
+    pool: ConnectionPool, repos: Repositories
+) -> None:
+    _seed(repos)
+    reflecting, release, answered = threading.Event(), threading.Event(), threading.Event()
+    ran: list[tuple[str, str]] = []
+
+    def runner(dot: Dot, profile: str, batch: Sequence[InboxMessage], channel: EventChannel) -> None:
+        del batch, channel
+        ran.append((dot.dot_id, profile))
+        if profile == REFLECTION_PROFILE:
+            reflecting.set()
+            assert release.wait(10)
+        elif dot.dot_id == "dot-b":
+            answered.set()
+
+    row = trigger(repos, repos.get_dot("dot-a"), "reflection", datetime.now(UTC))
+    assert row is not None
+    turns = Worker(pool, repos, InMemoryEventChannel(), runner)
+    learning = Worker(pool, repos, InMemoryEventChannel(), runner, lane="learning")
+    assert turns.run_once() is False  # the turn lane never claims a reflection row
+
+    stop = threading.Event()
+    threads = [threading.Thread(target=_loop, args=(w, stop), daemon=True) for w in (learning, turns)]
+    threads[0].start()
+    assert reflecting.wait(5)
+    enqueue(repos, "dot-a", "web", {"text": "mine waits for the gate"}, "chat")
+    enqueue(repos, "dot-b", "web", {"text": "hello"}, "chat")
+    threads[1].start()
+    try:
+        assert answered.wait(5)  # dot-b answered while dot-a is still reflecting
+        assert ("dot-a", "chat") not in ran  # dot-a's own turn waits for its lock
+        release.set()
+        deadline = time.monotonic() + 5
+        while ("dot-a", "chat") not in ran and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ("dot-a", "chat") in ran
+    finally:
+        release.set()
+        stop.set()
+        for thread in threads:
+            thread.join(5)
+    assert all(r["done_at"] is not None and r["error"] is None for r in _inbox(pool, "dot-a"))

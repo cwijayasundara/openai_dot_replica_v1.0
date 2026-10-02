@@ -27,13 +27,24 @@ from dot.channels.slack import (
     run_delivery,
 )
 from dot.config import Settings
+from dot.memory.episodes import CorrectionTooOld
 from dot.packs.loader import REPO_ROOT, load_pack
 from dot.persistence.db import Approval, ChannelBinding, Dot, InboxMessage, MemoryRepositories, User
 from dot.runtime.turns import InMemoryEventChannel, TurnEvent
 from dot.runtime.worker import _inbound_message
 from dot.surfaces.api import create_app
 from dot.surfaces.cli import link_slack
-from tests.support.fake_slack import BOT_USER, FakeSlack, authorize, click, dm, mention, submit_edit
+from tests.support.fake_slack import (
+    BOT_USER,
+    FakeSlack,
+    authorize,
+    click,
+    dm,
+    mention,
+    shortcut,
+    submit_correction,
+    submit_edit,
+)
 from tests.support.job_store_contract import WHEN
 
 OWNER, OTHER = "U01OWNER", "U02OTHER"
@@ -308,6 +319,67 @@ def test_edit_opens_a_modal_and_validates_before_deciding(rig: Rig, monkeypatch:
     rig.send(submit_edit(approval_id, OWNER, '{"to": "alex@example.com"}'))
     [review] = decided
     assert review.type == "edit" and review.edited_args == {"to": "alex@example.com"}
+
+
+def _posted_reply(rig: Rig) -> str:
+    rig.outbox.record_post("slack", "D1", "5.0", "dot-1", "ai-1")
+    return "5.0"
+
+
+def _correcting_app(rig: Rig, correct: Any) -> Any:
+    return build_app(
+        rig.repos,
+        rig.outbox,
+        client=rig.slack,
+        slack_signatures_checked=False,
+        process_before_response=True,
+        authorize=authorize,
+        correct=correct,
+    )
+
+
+def test_the_correct_shortcut_files_a_correction_for_the_owner(rig: Rig) -> None:
+    filed: list[tuple[str, str, str, str]] = []
+    rig.app = _correcting_app(
+        rig, lambda dot, by, body: filed.append((dot.dot_id, by, body.message_id, body.text)) or None
+    )
+    ts = _posted_reply(rig)
+    rig.send(shortcut("dot_correct", "D1", ts, OWNER))
+    [opened] = rig.slack.made("views.open")
+    assert opened["trigger_id"] == "trigger-1" and opened["view"]["callback_id"] == "dot_correct"
+    assert json.loads(opened["view"]["private_metadata"]) == {"dot_id": "dot-1", "message_id": "ai-1"}
+
+    blank = rig.send(submit_correction(opened["view"]["private_metadata"], OWNER, "   "))
+    assert json.loads(blank.body)["response_action"] == "errors" and filed == []
+    rig.send(submit_correction(opened["view"]["private_metadata"], OWNER, "Don't cc my manager"))
+    assert filed == [("dot-1", OWNER, "ai-1", "Don't cc my manager")]
+
+
+def test_the_correct_shortcut_refuses_unknown_messages_and_outsiders(rig: Rig) -> None:
+    filed: list[object] = []
+    rig.app = _correcting_app(rig, lambda *a: filed.append(a) or None)
+    rig.send(shortcut("dot_correct", "D1", "9.9", OWNER))  # posted before the mapping existed
+    assert rig.slack.made("views.open") == []
+    assert "web UI" in rig.slack.made("chat.postEphemeral")[-1]["text"]
+
+    metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
+    refused = rig.send(submit_correction(metadata, OTHER, "No"))
+    assert json.loads(refused.body)["response_action"] == "errors" and filed == []
+
+
+def test_the_correct_shortcut_reports_a_message_too_old_to_correct(rig: Rig) -> None:
+    def too_old(*_: Any) -> None:
+        raise CorrectionTooOld()
+
+    rig.app = _correcting_app(rig, too_old)
+    metadata = json.dumps({"dot_id": "dot-1", "message_id": "ai-1"})
+    answer = json.loads(rig.send(submit_correction(metadata, OWNER, "Don't cc my manager")).body)
+    assert answer["response_action"] == "errors" and "too old" in answer["errors"]["text"]
+
+
+def test_the_correct_shortcut_is_not_registered_without_a_corrector(rig: Rig) -> None:
+    rig.send(shortcut("dot_correct", "D1", _posted_reply(rig), OWNER))
+    assert rig.slack.made("views.open") == []
 
 
 def test_card_formatting_and_chunking_helpers() -> None:

@@ -481,6 +481,13 @@ def _mount_slack(app: FastAPI, settings: Settings, surface: Surface) -> None:
         client=web_client(settings.slack_bot_token),
         signing_secret=settings.slack_signing_secret,
         redactor=surface.runtime.redactor,
+        correct=lambda dot, by, body: record_correction(
+            surface.repos,
+            build_dot_agent(dot, "chat", settings=settings, runtime=surface.runtime, model=surface.model),
+            dot,
+            by,
+            body,
+        ),
     )
     handler = SlackRequestHandler(bolt)
 

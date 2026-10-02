@@ -112,6 +112,36 @@ def submit_edit(approval_id: str, user: str, raw: str) -> dict[str, Any]:
     }
 
 
+def shortcut(callback_id: str, channel: str, message_ts: str, user: str) -> dict[str, Any]:
+    """A message shortcut, as Slack sends it (``message_action``)."""
+    return {
+        "type": "message_action",
+        "team": {"id": "T1"},
+        "user": {"id": user},
+        "channel": {"id": channel},
+        "callback_id": callback_id,
+        "trigger_id": "trigger-1",
+        "message_ts": message_ts,
+        "message": {"type": "message", "ts": message_ts, "text": "a reply"},
+        "response_url": "https://hooks.slack.test/actions/1",
+    }
+
+
+def submit_correction(private_metadata: str, user: str, text: str) -> dict[str, Any]:
+    return {
+        "type": "view_submission",
+        "team": {"id": "T1"},
+        "user": {"id": user},
+        "view": {
+            "id": "V2",
+            "type": "modal",
+            "callback_id": "dot_correct",
+            "private_metadata": private_metadata,
+            "state": {"values": {"text": {"text": {"type": "plain_text_input", "value": text}}}},
+        },
+    }
+
+
 def authorize(**_: Any) -> AuthorizeResult:
     """Bolt's per-request authorization, without calling Slack's auth.test."""
     return AuthorizeResult(enterprise_id=None, team_id="T1", bot_user_id=BOT_USER, bot_id="B1", bot_token="xoxb-test")

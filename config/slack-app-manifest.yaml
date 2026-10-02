@@ -12,11 +12,17 @@ features:
   bot_user:
     display_name: dot
     always_online: true
+  shortcuts:
+    - name: Correct this
+      type: message
+      callback_id: dot_correct
+      description: Tell the dot what to do differently next time
 oauth_config:
   scopes:
     bot:
       - app_mentions:read   # mentions in channels bound to a dot
       - chat:write          # replies, approval cards and their updates
+      - commands            # the "Correct this" message shortcut
       - im:history          # DMs to the bot (message.im)
 settings:
   event_subscriptions:

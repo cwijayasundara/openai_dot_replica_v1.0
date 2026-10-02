@@ -26,6 +26,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import ValidationError
 from slack_bolt import Ack, App
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -33,9 +34,10 @@ from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
 from dot.channels.base import Inbound, accept
 from dot.channels.outbox import CardChange, Outbox, OutboxItem
+from dot.memory.episodes import CorrectionBody, CorrectionTooOld, record_correction
 from dot.middleware.redaction import Redactor
-from dot.persistence.db import ApprovalConflict, Dot, Json, NotFound, Repositories
-from dot.safety.approvals import ReviewDecision, decide
+from dot.persistence.db import ApprovalConflict, Dot, Episode, Json, NotFound, Repositories
+from dot.safety.approvals import ReviewDecision, approvers, decide
 
 log = logging.getLogger(__name__)
 CHANNEL = "slack"
@@ -64,6 +66,10 @@ _DECIDED = {"approve": "Approved", "edit": "Approved with edits", "reject": "Rej
 
 NOT_LINKED = "This Slack account is not linked to a dot. Ask an operator to run `dot link-slack`."
 NOT_OWNER = "Only this dot's owner can ask it to do things."
+NOT_CORRECTABLE = 'This message can\'t be corrected here. Use "Correct this" in the web UI.'
+
+# Files a correction by a Slack user against one of the dot's AI messages.
+Corrector = Callable[[Dot, str, CorrectionBody], Episode]
 
 
 def escape(text: str) -> str:
@@ -181,8 +187,9 @@ def build_app(
     slack_signatures_checked: bool = True,
     process_before_response: bool = False,
     authorize: Callable[..., Any] | None = None,
+    correct: Corrector | None = None,
 ) -> App:
-    """The Bolt app.
+    """The Bolt app. The "Correct this" shortcut is registered only with ``correct``.
 
     ``slack_signatures_checked=False`` skips Slack's request-signature and token
     checks. It exists only for tests that dispatch requests to the app directly;
@@ -272,6 +279,51 @@ def build_app(
             return
         ack()
 
+    if correct is not None:
+
+        @app.shortcut("dot_correct")
+        def on_correct(ack: Ack, body: Json) -> None:
+            ack()
+            conversation = str((body.get("channel") or {}).get("id", ""))
+            ts = str((body.get("message") or {}).get("ts", ""))
+            found = outbox.find_post(CHANNEL, conversation, ts)
+            if found is None:
+                _ephemeral(client, body, NOT_CORRECTABLE)
+                return
+            dot_id, message_id = found
+            # trigger_id is valid for three seconds: open the modal before anything slow.
+            client.views_open(trigger_id=body["trigger_id"], view=_correct_view(dot_id, message_id))
+
+        @app.view("dot_correct")
+        def on_correct_submit(ack: Ack, body: Json, view: Json) -> None:
+            target = json.loads(str(view["private_metadata"]))
+            text = (view["state"]["values"]["text"]["text"]["value"] or "").strip()
+            user = str(body["user"]["id"])
+            try:
+                dot = repos.get_dot(str(target["dot_id"]))
+                owner = repos.get_user(dot.owner_user_id)
+            except NotFound:
+                ack(response_action="errors", errors={"text": "This dot no longer exists."})
+                return
+            # The same rule as the web's viewer(), in the Slack identity decide() uses.
+            if user != owner.slack_user_id and user not in approvers(dot.pack_name):
+                ack(response_action="errors", errors={"text": "Only the dot's owner or an approver can correct it."})
+                return
+            try:
+                correction = CorrectionBody(message_id=str(target["message_id"]), text=text)
+            except ValidationError:
+                ack(response_action="errors", errors={"text": "Say what the dot should do differently."})
+                return
+            try:
+                correct(dot, user, correction)
+            except CorrectionTooOld:
+                ack(response_action="errors", errors={"text": "This message is too old to correct."})
+                return
+            except NotFound:
+                ack(response_action="errors", errors={"text": NOT_CORRECTABLE})
+                return
+            ack()
+
     return app
 
 
@@ -294,6 +346,30 @@ def _edit_view(approval_id: str, tool: str, current: str) -> Json:
                     "multiline": True,
                     "initial_value": current,
                     "max_length": 3000,
+                },
+            }
+        ],
+    }
+
+
+def _correct_view(dot_id: str, message_id: str) -> Json:
+    return {
+        "type": "modal",
+        "callback_id": "dot_correct",
+        "private_metadata": json.dumps({"dot_id": dot_id, "message_id": message_id}),
+        "title": {"type": "plain_text", "text": "Correct this"},
+        "submit": {"type": "plain_text", "text": "Save"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "text",
+                "label": {"type": "plain_text", "text": "What should the dot do differently?"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "text",
+                    "multiline": True,
+                    "max_length": 2000,
                 },
             }
         ],
@@ -426,7 +502,7 @@ def serve() -> None:
     """Socket Mode locally: receive events and deliver the outbox until SIGINT or SIGTERM."""
     from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-    from dot.assembly import settings_redactor
+    from dot.assembly import build_dot_agent, build_graph_runtime, settings_redactor
     from dot.channels.outbox import PostgresOutbox
     from dot.config import get_settings
     from dot.persistence.db import PostgresRepositories, make_pool, migrate
@@ -436,16 +512,23 @@ def serve() -> None:
     if not settings.database_url or not settings.slack_bot_token:
         raise SystemExit("DOT_DATABASE_URL and DOT_SLACK_BOT_TOKEN are required")
     pool = make_pool(settings.database_url)
+    runtime = None
     try:
         migrate(pool)
         repos, outbox = PostgresRepositories(pool), PostgresOutbox(pool)
         client = web_client(settings.slack_bot_token)
+        # A correction reads the dot's checkpointed thread; the agent is built, never invoked.
+        runtime = build_graph_runtime(settings)
+        graph_runtime = runtime
         app = build_app(
             repos,
             outbox,
             client=client,
             signing_secret=settings.slack_signing_secret,
             redactor=settings_redactor(settings),
+            correct=lambda dot, by, body: record_correction(
+                repos, build_dot_agent(dot, "chat", settings=settings, runtime=graph_runtime), dot, by, body
+            ),
         )
         stop = threading.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -470,6 +553,8 @@ def serve() -> None:
             if handler is not None:
                 handler.close()  # type: ignore[no-untyped-call]
     finally:
+        if runtime is not None:
+            runtime.close()
         pool.close()
 
 

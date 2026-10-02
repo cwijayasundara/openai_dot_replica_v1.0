@@ -48,6 +48,26 @@ request at `POST /slack/events` on GCP.
   against the pack's `approvers` plus `DOT_PACK_APPROVERS` (a deployment
   setting, so workspace ids never go in the shipped pack).
 
+## Correcting the dot
+
+The **Correct this** message shortcut (⋯ on one of the dot's replies) opens a
+modal for "what should the dot do differently?". On submit it files the same
+correction episode as the web UI's button (`record_correction`), which nightly
+reflection reads.
+
+- **Who.** The dot's owner (their linked Slack id) or a Slack id in the pack's
+  approvers plus `DOT_PACK_APPROVERS`: the same rule as the web and the same
+  identity approval buttons use. The episode records the Slack user id.
+- **Which message.** The delivery loop records which AI message each posted
+  reply came from (`message_posts`). Replies posted before that mapping existed,
+  and anything the dot did not post, get a private "use the web UI" notice.
+  Messages older than the correction scan window are refused as too old.
+- **Model settings.** To find the message, the Slack process builds the dot's
+  agent (never invokes it) to read its checkpointed thread. Building it
+  constructs the chat model, which needs an API key, so the Slack process needs
+  the model settings (`DOT_MODEL_PROVIDER`, `DOT_FIREWORKS_API_KEY` and, for an
+  OpenAI-compatible endpoint, `DOT_OPENAI_BASE_URL`) to file a correction.
+
 ## Known limits
 
 - When web and Slack messages fold into one turn, the reply goes to the latest
@@ -122,6 +142,7 @@ Either way, the C1 path is fully exercised.
   - escaping, threading, unfurl settings and chunking;
   - retry and parking;
   - cards: posting, approve, non-approver, the edit modal, and updates;
+  - the "Correct this" shortcut: modal, access, unknown and too-old messages;
   - `link-slack`.
 - `tests/contract/test_slack_db.py` (`-m db`) runs the outbox contract and the
   whole story against Postgres. The worker, the job runner and the delivery

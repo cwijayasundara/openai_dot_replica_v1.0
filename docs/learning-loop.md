@@ -39,8 +39,8 @@ POST /dots/{dot_id}/corrections
 
 - The web UI shows "Correct this" on the dot's messages; the thread view
   returns each AI message's `id`. Only the dot's owner or an approver may file
-  a correction. A Slack message shortcut calling the same route is not built
-  yet.
+  a correction. In Slack, the "Correct this" message shortcut files the same
+  episode ([`slack.md`](slack.md)).
 - Code resolves `message_id` to the earliest checkpoint whose last message is
   that AI message (the step right after the model made it), then stores
   `proposal = {thread_id, profile, checkpoint_id, message_id, tool_calls}` and

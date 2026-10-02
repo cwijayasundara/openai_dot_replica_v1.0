@@ -144,9 +144,13 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         assert posted() == [("message", "Started a run for affiliates.csv (sponsor-a).")]
 
         # The workbench moves the run to the brief gate with one question.
+        # Its record keeps status "scoping"; the gate shows only in the run's graph state.
+        brief = {"questions": [{"id": "q1", "text": "Which country is the home market?", "options": None}]}
         fake.states[run_id].update(
-            pending={"gate": "brief", "message": "Answer the brief questions", "blocked_reasons": []},
-            brief={"questions": [{"id": "q1", "text": "Which country is the home market?", "options": None}]},
+            status="awaiting_brief",
+            gate_message="Answer the brief questions",
+            pending={"gate": "brief", "brief": brief, "message": "Answer the brief questions", "blocked_reasons": []},
+            brief=brief,
         )
 
         # 4. The status sweep reads the run and records that it waits at the brief gate.
@@ -167,8 +171,9 @@ def test_a_dropped_file_becomes_an_approved_run_and_a_drafted_sponsor_email(
         )
         fire("status-sweep", status, datetime(2026, 10, 5, 10, 0, tzinfo=UTC))
         sweep_results = _results(status)
-        assert [r["run_id"] for r in sweep_results["list_runs"]["runs"]] == [run_id]
-        assert sweep_results["get_run"]["gate"] == "brief"
+        assert [(r["run_id"], r["status"]) for r in sweep_results["list_runs"]["runs"]] == [(run_id, "scoping")]
+        assert (sweep_results["get_run"]["status"], sweep_results["get_run"]["gate"]) == ("awaiting_brief", "brief")
+        assert sweep_results["get_run"]["age_hours"] is not None
         assert [q["text"] for q in sweep_results["get_run"]["brief_questions"]] == ["Which country is the home market?"]
         [status_finding] = findings("status-sweep")
         assert status_finding.status == OPEN and status_finding.title == f"Run {run_id} waiting at brief"

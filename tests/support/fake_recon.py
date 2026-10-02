@@ -28,7 +28,8 @@ class FakeRecon:
         self.sponsors: list[dict[str, Any]] = (
             sponsors if sponsors is not None else [{"id": "sponsor-a", "name": "Sponsor A"}]
         )
-        # Records as GET /runs returns them; ``states`` holds the extra GET /runs/{id} fields.
+        # Records as GET /runs returns them; ``states`` holds each run's GET /runs/{id} body
+        # except ``record``, which is nested from ``runs``.
         self.runs: list[dict[str, Any]] = []
         self.states: dict[str, dict[str, Any]] = {}
         self.requests: list[httpx.Request] = []
@@ -41,7 +42,14 @@ class FakeRecon:
     def client(self) -> ReconClient:
         return ReconClient(BASE_URL, credentials=None, transport=httpx.MockTransport(self.handle))
 
-    def add_run(self, sponsor_id: str, upload_name: str, upload_sha: str, **state: Any) -> str:
+    def add_run(
+        self, sponsor_id: str, upload_name: str, upload_sha: str, *, record_status: str = "scoping", **state: Any
+    ) -> str:
+        """Add a run. ``state`` overrides the graph state GET /runs/{id} returns at top level.
+
+        As in the real workbench, the record keeps status "scoping" and its creation time until
+        the run is rejected or locked; the live status and gate are in the graph state.
+        """
         run_id = f"run-{len(self.runs) + 1}"
         now = _now()
         self.runs.append(
@@ -49,20 +57,30 @@ class FakeRecon:
                 "id": run_id,
                 "sponsor_id": sponsor_id,
                 "entity": "affiliate",
-                "status": state.pop("status", "awaiting_brief"),
-                "upload_name": upload_name,
+                "status": record_status,
+                "upload_uri": f"uploads/{run_id}/{upload_name}",
                 "upload_sha": upload_sha,
+                "fingerprint": "f" * 16,
+                "created_by": "dot",
                 "created_at": now,
                 "updated_at": now,
+                "upload_name": upload_name,
             }
         )
         self.states[run_id] = {
+            "run_id": run_id,
+            "sponsor_id": sponsor_id,
+            "status": "scoping",
             "phase": "p1",
             "pending": None,
             "brief": None,
+            "gate_message": None,
             "error": None,
-            "working": False,
             "artifacts": [],
+            # Added by the API around the graph state.
+            "working": False,
+            "job_error": None,
+            "decisions": [],
             **state,
         }
         return run_id
@@ -80,7 +98,7 @@ class FakeRecon:
             record = next((r for r in self.runs if r["id"] == run_id), None)
             if record is None:
                 return httpx.Response(404, json={"detail": "run not found"})
-            return httpx.Response(200, json={**record, **self.states[run_id]})
+            return httpx.Response(200, json={**self.states[run_id], "record": record})
         if request.method == "POST" and path == "/runs":
             return self._start(request)
         return httpx.Response(404, json={"detail": "not found"})

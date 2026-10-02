@@ -23,11 +23,14 @@ The workbench API is in `src/onboarding_agent/surfaces/api.py` in that repo.
   - `id`, `sponsor_id`, `entity` and `status`;
   - `upload_name` and `upload_sha`;
   - `created_at` and `updated_at`.
-- `GET /runs/{id}` returns the run's state:
-  - `phase` (`p1`–`p4`, `done`) and `status`;
-  - `pending` (the gate payload: `{gate, message, blocked_reasons, allowed_actions}`);
+
+  A record is created with status `scoping`, and its status and `updated_at` change only when the run is rejected or locked. An in-flight run therefore always lists as `scoping`, with `updated_at` at its creation time.
+- `GET /runs/{id}` returns the run's graph state at top level, plus fields the API adds:
+  - `run_id`, `sponsor_id`, `phase` (`p1`–`p4`, `done`) and the live `status`;
+  - `pending` (the gate payload: `{gate, message, blocked_reasons, allowed_actions}`) and `gate_message`;
   - `brief.questions` (up to two `{id, text, options}`);
-  - `error`, `working` and `artifacts`.
+  - `error` and `artifacts`;
+  - added by the API: `working`, `job_error` (a failed background job), `decisions`, and `record` (the run record above, which holds `created_at`).
 - `POST /runs` takes a multipart form with `sponsor_id`, `file` and `entity` (`affiliate`). It returns 202 `{run_id}`. Invalid input gets 422: the sponsor id format, the entity, more than 20 MB, or a file that isn't CSV, TSV, XLSX or XLS.
 - Gates are `brief`, `findings` and `signoff`, answered at `POST /runs/{id}/gate`. **The dot gets no tool that reaches this route.**
 - Auth:
@@ -48,17 +51,16 @@ The workbench API is in `src/onboarding_agent/surfaces/api.py` in that repo.
    - It calls `list_drops()`. Every file that is supported, has no workbench run, and is not declined becomes a finding: title `New file <name> for <sponsor>`, with a summary of size, sha256 and type.
    - Unsupported or oversized files become findings titled `Skipped file …`, with the reason.
 2. **`status-sweep`** runs every hour, 07:00–22:00, Monday–Friday. It is a sweep with profile `sweep`.
-   - It calls `list_runs()` and `get_run()`. Each run that is waiting at a gate, in `error`, or has had no update for more than 24 hours becomes a finding.
+   - It calls `list_runs()` to enumerate runs and `get_run()` for each run not locked or rejected. Each run that `get_run` shows waiting at a gate, or with an `error` or `job_error`, becomes a finding. `list_runs` cannot judge this: the workbench's run record keeps status `scoping` and its creation time until the run is rejected or locked.
    - Titles are fixed per run and state (`Run <id> waiting at brief`), so one open finding exists per blocker.
-   - Its summary carries the phase, status, age, the gate message and the brief questions.
+   - Its summary carries the phase, status, age, the gate message, any error or job error, and the brief questions, so the digest can report how long each blocker has aged.
 3. **`intake`** is a digest at `5-59/15 7-22 * * 1-5`, five minutes after each `intake-sweep` (which fires at `*/15 7-22 * * 1-5`), with profile `intake` and `findings_from: [intake-sweep]`.
    - For each `New file` finding, the dot calls `start_run(sponsor_id, file_name, sha256)`. That raises an approval card.
    - After approval, the tool uploads the file and returns the `run_id`.
    - Its findings are marked reported when the turn ends in a reply *or* in an approval wait (below).
 4. **`daily`** is a digest at `45 8 * * 1-5` with profile `digest` and `findings_from: [status-sweep]`. It posts one summary:
    - runs grouped by phase;
-   - blockers (gate waits and errors) with their ages;
-   - stale runs.
+   - blockers (gate waits and errors) with their ages.
 
    For each run waiting at a `brief` gate, it calls `draft_email` to the sponsor's contact, which `list_sponsors` reads from the dot's `/wiki/sponsors.md`. The draft asks the brief questions in plain language, with the options. Sending stays a separate, approved `send_email`.
 5. **`reflection`** runs nightly at 02:00, as in `research-analyst`.
@@ -92,8 +94,8 @@ It has one method per route the tools use. It has **no gate method**.
 |---|---|---|
 | `list_sponsors()` | read | `[{id, name, contact}]`; `contact` is parsed from the dot's `/wiki/sponsors.md` table, null when missing |
 | `list_drops(sponsor_id=None)` | read | For each file under the drop root: `{sponsor_id, file_name, bytes, sha256, supported, reason, run_id, declined}`. `run_id` comes from matching `sha256` with a run's `upload_sha`. `declined` is true when this dot has a rejected `start_run` approval for the same `sponsor_id`, `file_name` and `sha256`. Sponsor folders not registered in the workbench are reported as `reason: "unknown sponsor"`. |
-| `list_runs(sponsor_id=None)` | read | `[{run_id, sponsor_id, status, upload_name, age_hours, updated_hours}]` |
-| `get_run(run_id)` | read | `{run_id, sponsor_id, phase, status, gate, gate_message, blocked_reasons, brief_questions, error, working, age_hours}`, compact. |
+| `list_runs(sponsor_id=None)` | read | `[{run_id, sponsor_id, status, upload_name, age_hours}]`. `status` is the record's: `scoping` until rejected or locked. |
+| `get_run(run_id)` | read | `{run_id, sponsor_id, phase, status, gate, gate_message, blocked_reasons, brief_questions, error, job_error, working, age_hours}`, compact. `status` is the live graph status; `age_hours` comes from the nested `record.created_at`; messages and errors are clipped to 300 characters. |
 | `start_run(sponsor_id, file_name, sha256)` | write | See below. |
 
 `start_run` does these steps in code:

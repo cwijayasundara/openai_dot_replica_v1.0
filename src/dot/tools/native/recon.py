@@ -27,6 +27,8 @@ SPONSOR_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 NOT_CONFIGURED = "the recon workbench is not configured"
 SPONSORS_PAGE = "/wiki/sponsors.md"
+# Workbench messages and errors are clipped to this many characters.
+MAX_TEXT = 300
 _CHUNK = 1024 * 1024
 # O_NOFOLLOW refuses a symlink swapped in after the is_symlink check; O_NONBLOCK keeps a
 # FIFO from hanging the open. Only regular files are read.
@@ -77,6 +79,10 @@ def _hours_since(value: Any) -> float | None:
     if then.tzinfo is None:
         then = then.replace(tzinfo=UTC)
     return round((datetime.now(UTC) - then).total_seconds() / 3600, 1)
+
+
+def _clip(value: Any) -> str | None:
+    return None if value is None else str(value)[:MAX_TEXT]
 
 
 def _run_id(run: dict[str, Any]) -> str | None:
@@ -248,7 +254,8 @@ def build_list_drops(deps: ToolDeps) -> BaseTool:
 
 def build_list_runs(deps: ToolDeps) -> BaseTool:
     def list_runs(sponsor_id: str | None = None) -> str:
-        """List recon workbench runs with status and age in hours. Optionally for one sponsor."""
+        """List recon workbench runs with age in hours. Optionally for one sponsor. The status is the
+        record's: "scoping" until the run is rejected or locked. Call get_run for where a run stands."""
         if deps.recon is None:
             return fail(NOT_CONFIGURED)
         try:
@@ -263,7 +270,6 @@ def build_list_runs(deps: ToolDeps) -> BaseTool:
                     "status": run.get("status"),
                     "upload_name": run.get("upload_name"),
                     "age_hours": _hours_since(run.get("created_at")),
-                    "updated_hours": _hours_since(run.get("updated_at")),
                 }
                 for run in runs
             ]
@@ -274,8 +280,9 @@ def build_list_runs(deps: ToolDeps) -> BaseTool:
 
 def build_get_run(deps: ToolDeps) -> BaseTool:
     def get_run(run_id: str) -> str:
-        """Show one run: phase, status, the gate it waits at with its message and blocked
-        reasons, and any brief questions. Read-only; gates are answered by a human in the workbench."""
+        """Show where one run stands: phase, live status, age in hours, the gate it waits at with its
+        message and blocked reasons, any brief questions, and any error or failed background job.
+        Read-only; gates are answered by a human in the workbench."""
         if deps.recon is None:
             return fail(NOT_CONFIGURED)
         try:
@@ -286,14 +293,18 @@ def build_get_run(deps: ToolDeps) -> BaseTool:
         pending = pending if isinstance(pending, dict) else {}
         brief = run.get("brief")
         questions = (brief.get("questions") if isinstance(brief, dict) else None) or []
+        # The workbench nests the run record, which holds created_at, beside the graph state.
+        record = run.get("record")
+        record = record if isinstance(record, dict) else {}
         return ok(
             run_id=_run_id(run) or run_id,
-            sponsor_id=run.get("sponsor_id"),
+            sponsor_id=run.get("sponsor_id", record.get("sponsor_id")),
             phase=run.get("phase"),
             status=run.get("status"),
-            error=run.get("error"),
+            error=_clip(run.get("error")),
+            job_error=_clip(run.get("job_error")),
             working=run.get("working"),
-            age_hours=_hours_since(run.get("created_at")),
+            age_hours=_hours_since(run.get("created_at") or record.get("created_at")),
             gate=pending.get("gate"),
             gate_message=pending.get("message"),
             blocked_reasons=pending.get("blocked_reasons"),

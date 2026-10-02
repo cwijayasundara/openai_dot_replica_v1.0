@@ -177,23 +177,23 @@ def test_list_drops_skips_a_symlinked_sponsor_folder(tmp_path: Path, fake: FakeR
 
 def test_list_runs_is_compact(tmp_path: Path, fake: FakeRecon) -> None:
     deps = _deps(tmp_path, fake)
-    run_a = fake.add_run("sponsor-a", "a.csv", SHA)
-    fake.add_run("sponsor-b", "b.csv", "f" * 64, status="locked")
+    run_a = fake.add_run("sponsor-a", "a.csv", SHA, status="awaiting_brief")
+    fake.add_run("sponsor-b", "b.csv", "f" * 64, record_status="locked")
     now = datetime.now(UTC)
-    fake.runs[0]["created_at"] = (now - timedelta(hours=30, minutes=6)).isoformat()
-    fake.runs[0]["updated_at"] = (now - timedelta(hours=2)).isoformat()
+    fake.runs[0]["created_at"] = fake.runs[0]["updated_at"] = (now - timedelta(hours=30, minutes=6)).isoformat()
 
     everything = _call(deps, "list_runs")
     assert [r["run_id"] for r in everything["runs"]] == [run_a, "run-2"]
-    first = everything["runs"][0]
+    first, second = everything["runs"]
+    # The record's status, which stays "scoping" while a run is in flight.
     assert first == {
         "run_id": run_a,
         "sponsor_id": "sponsor-a",
-        "status": "awaiting_brief",
+        "status": "scoping",
         "upload_name": "a.csv",
         "age_hours": 30.1,
-        "updated_hours": 2.0,
     }
+    assert second["status"] == "locked"
     only_b = _call(deps, "list_runs", sponsor_id="sponsor-b")["runs"]
     assert [r["run_id"] for r in only_b] == ["run-2"]
     assert fake.requests[-1].url.params["sponsor_id"] == "sponsor-b"
@@ -206,39 +206,65 @@ def test_get_run_flattens_gate_and_brief(tmp_path: Path, fake: FakeRecon) -> Non
         "sponsor-a",
         "a.csv",
         SHA,
+        status="awaiting_brief",
         phase="p1",
+        gate_message="Answer the brief",
         pending={
             "gate": "brief",
+            "brief": {"questions": [question]},
             "message": "Answer the brief",
             "blocked_reasons": ["currency"],
             "allowed_actions": [],
         },
         brief={"questions": [question]},
         artifacts=[{"name": "big"}],
+        decisions=[{"kind": "brief.answer"}],
     )
+    fake.runs[0]["created_at"] = (datetime.now(UTC) - timedelta(hours=26, minutes=30)).isoformat()
     result = _call(deps, "get_run", run_id=run_id)
-    assert result["ok"] is True
-    assert {k: v for k, v in result.items() if k not in {"ok", "age_hours"}} == {
+    # The live status comes from the graph state; the record still says "scoping".
+    assert result == {
+        "ok": True,
         "run_id": run_id,
         "sponsor_id": "sponsor-a",
         "phase": "p1",
         "status": "awaiting_brief",
         "error": None,
+        "job_error": None,
         "working": False,
+        "age_hours": 26.5,
         "gate": "brief",
         "gate_message": "Answer the brief",
         "blocked_reasons": ["currency"],
         "brief_questions": [{"id": "q1", "text": "Which currency?", "options": ["USD", "EUR"]}],
     }
-    assert result["age_hours"] == 0.0
 
     idle = _call(deps, "get_run", run_id=fake.add_run("sponsor-a", "b.csv", "e" * 64))
+    assert (idle["status"], idle["age_hours"]) == ("scoping", 0.0)
     assert (idle["gate"], idle["gate_message"], idle["blocked_reasons"], idle["brief_questions"]) == (
         None,
         None,
         None,
         [],
     )
+
+
+def test_get_run_reports_a_failed_job_clipped(tmp_path: Path, fake: FakeRecon) -> None:
+    deps = _deps(tmp_path, fake)
+    run_id = fake.add_run("sponsor-a", "a.csv", SHA, job_error="RecipeFailed: " + "x" * 600)
+    result = _call(deps, "get_run", run_id=run_id)
+    assert result["job_error"] == ("RecipeFailed: " + "x" * 600)[:300]
+    assert result["status"] == "scoping" and result["working"] is False
+
+
+def test_get_run_prefers_a_top_level_created_at(tmp_path: Path, fake: FakeRecon) -> None:
+    deps = _deps(tmp_path, fake)
+    earlier = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+    run_id = fake.add_run("sponsor-a", "a.csv", SHA, created_at=earlier)
+    assert _call(deps, "get_run", run_id=run_id)["age_hours"] == 3.0
+    del fake.states[run_id]["created_at"]
+    del fake.runs[0]["created_at"]
+    assert _call(deps, "get_run", run_id=run_id)["age_hours"] is None
 
 
 def test_get_run_refuses_a_bad_id_and_passes_workbench_errors(tmp_path: Path, fake: FakeRecon) -> None:
@@ -272,7 +298,7 @@ def test_start_run_uploads_exactly_the_approved_bytes(tmp_path: Path, fake: Fake
     result = _call(deps, "start_run", sponsor_id="sponsor-a", file_name="affiliates.csv", sha256=SHA)
     assert result == {"ok": True, "run_id": "run-1"}
     assert fake.uploads == [{"sponsor_id": "sponsor-a", "file_name": "affiliates.csv", "data": ROWS}]
-    assert fake.runs[0]["upload_sha"] == SHA and fake.runs[0]["status"] == "awaiting_brief"
+    assert fake.runs[0]["upload_sha"] == SHA and fake.runs[0]["status"] == "scoping"
     assert ("POST", "/runs") in [(r.method, r.url.path) for r in fake.requests]
 
 

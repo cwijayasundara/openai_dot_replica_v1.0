@@ -45,8 +45,9 @@ export default function DotsPage() {
       <main className="mx-auto max-w-2xl px-4 py-12">
         <h1 className="text-2xl font-semibold">Sign-in required</h1>
         <p className="mt-2 text-muted">
-          The API did not receive a verified user. Locally, start it with <code className="font-mono">DOT_WEB_AUTH=dev</code>{" "}
-          and <code className="font-mono">DOT_WEB_DEV_USER</code> set to your user id.
+          The API did not receive a verified user. Locally, start it with{" "}
+          <code className="font-mono">DOT_WEB_AUTH=dev</code> and <code className="font-mono">DOT_WEB_DEV_USER</code>{" "}
+          set to your user id.
         </p>
       </main>
     );

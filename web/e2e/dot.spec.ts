@@ -48,7 +48,9 @@ test("one thread across Slack and the web: message, job, approval, audit", async
   expect(sent.to).toEqual(["sam@example.com"]);
 
   // A correction targets one of the dot's messages and is stored for reflection.
-  const reply = page.locator('[data-testid="thread-message"][data-role="ai"]').filter({ hasText: "Email sent to Sam." });
+  const reply = page
+    .locator('[data-testid="thread-message"][data-role="ai"]')
+    .filter({ hasText: "Email sent to Sam." });
   await reply.getByRole("button", { name: "Correct this" }).click();
   await reply.getByLabel("What should the dot do differently?").fill("Keep emails to Sam under 50 words");
   await reply.getByRole("button", { name: "Save correction" }).click();

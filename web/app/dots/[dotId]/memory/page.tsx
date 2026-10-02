@@ -110,8 +110,8 @@ export default function MemoryPage() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-6">
       <p className="mb-6 max-w-prose text-muted">
-        Changes the dot made to its own preferences, wiki and skills after reflecting on your approvals and edits.
-        Each change cites the episodes behind it.
+        Changes the dot made to its own preferences, wiki and skills after reflecting on your approvals and edits. Each
+        change cites the episodes behind it.
       </p>
       <ErrorNote error={error} />
       {versions === null ? (
@@ -132,9 +132,7 @@ export default function MemoryPage() {
                 </span>
               </div>
               {version.detail.rationale && <p className="mt-1 max-w-prose">{version.detail.rationale}</p>}
-              {version.detail.gate && (
-                <p className="text-sm text-muted">Replay: {version.detail.gate.reason}</p>
-              )}
+              {version.detail.gate && <p className="text-sm text-muted">Replay: {version.detail.gate.reason}</p>}
               {version.episodes.length > 0 && (
                 <p className="text-sm text-muted">From episodes {version.episodes.join(", ")}</p>
               )}

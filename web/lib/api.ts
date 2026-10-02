@@ -85,9 +85,7 @@ export type MemoryVersion = {
 };
 
 export type Decision =
-  | { type: "approve" }
-  | { type: "reject"; message?: string }
-  | { type: "edit"; edited_args: Record<string, unknown> };
+  { type: "approve" } | { type: "reject"; message?: string } | { type: "edit"; edited_args: Record<string, unknown> };
 
 export class ApiError extends Error {
   constructor(

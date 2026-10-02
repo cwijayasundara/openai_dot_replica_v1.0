@@ -19,7 +19,7 @@ from psycopg_pool import ConnectionPool
 
 from dot.persistence.db import Json
 
-EventKind = Literal["message", "tool_call", "interrupt", "approval", "job_started", "job_finished", "error"]
+EventKind = Literal["message", "tool_call", "interrupt", "approval", "job_started", "job_finished", "memory", "error"]
 
 
 @dataclass(frozen=True)

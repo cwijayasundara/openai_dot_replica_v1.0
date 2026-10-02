@@ -321,7 +321,8 @@ this one back would leave it impossible to roll back. Roll back newest first.
 
 The web memory page shows each version's status, rationale, replay reason
 and diff, with **Accept** and **Discard** on held edits and **Roll back** on
-accepted ones.
+accepted ones. Each action, and each nightly run that proposes or judges an edit,
+streams a `memory` event, so every open memory page reloads.
 
 ## Settings
 

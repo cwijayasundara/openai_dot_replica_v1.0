@@ -29,7 +29,7 @@ class Rig:
         runtime = build_graph_runtime(settings)
         self.dot: Dot = create_dot(self.repos, runtime, "research-analyst", "owner")
         self.files = MemoryFiles(runtime.store, self.dot.dot_id)
-        app = create_app(settings, repos=self.repos, runtime=runtime, model=ScriptedChatModel(script=[]))
+        self.app = app = create_app(settings, repos=self.repos, runtime=runtime, model=ScriptedChatModel(script=[]))
         self.user: list[str | None] = ["reviewer"]
 
         @app.middleware("http")
@@ -182,3 +182,13 @@ def test_only_approvers_may_act_on_memory(tmp_path: Path, monkeypatch: pytest.Mo
     )  # type: ignore[call-arg]
     assert rig.client.post(f"/dots/{other.dot_id}/memory/{version.id}/accept").status_code == 404
     assert rig.status(version) == "needs_review" and rig.memory_events() == []
+
+
+def test_a_memory_action_streams_a_memory_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path, monkeypatch)
+    version = rig.held(AGENTS_PATH, "", "- Keep emails short.\n")
+    assert rig.act(version, "discard").status_code == 200
+    events = [e for e in rig.app.state.surface.events.events if e.kind == "memory"]
+    assert [(e.dot_id, e.detail) for e in events] == [(rig.dot.dot_id, {"version": version.id, "status": "discarded"})]
+    assert rig.act(version, "discard").status_code == 409
+    assert len([e for e in rig.app.state.surface.events.events if e.kind == "memory"]) == 1  # no event on a refusal

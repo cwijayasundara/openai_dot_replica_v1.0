@@ -242,7 +242,9 @@ def test_the_worker_runs_a_reflection_row_without_an_agent(tmp_path: Path) -> No
     assert len(list(graph.get_state_history(config))) == checkpoints
     # The gate runs next. These seeded episodes have no checkpoint, so the edit is held for a human.
     assert [v.status for v in rig.repos.list_memory_versions(rig.dot.dot_id)] == ["needs_review"]
-    assert events.events == []
+    [event] = events.events
+    assert event.kind == "memory" and event.detail["proposed"] == 1
+    assert event.detail["judged"] == [v.id for v in rig.repos.list_memory_versions(rig.dot.dot_id)]
 
     rig.repos.update_inbox(replace(rig.repos.get_inbox(row.id), done_at=datetime.now(UTC)))
     rig.model.structured_script.append(RuntimeError("model unavailable"))

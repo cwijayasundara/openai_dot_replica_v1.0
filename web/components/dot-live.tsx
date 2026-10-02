@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { api, eventsUrl, type Approval, type Dot, type Finding, type Job, type ThreadMessage } from "@/lib/api";
 
 // Kinds the API streams (dot.runtime.turns.EventKind). Each one means "something changed".
-const KINDS = ["message", "tool_call", "interrupt", "approval", "job_started", "job_finished", "error"];
+const KINDS = ["message", "tool_call", "interrupt", "approval", "job_started", "job_finished", "memory", "error"];
 
 export type DotState = "idle" | "working" | "waiting";
 

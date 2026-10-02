@@ -331,6 +331,7 @@ def create_app(
                     version = discard(surface.repos, version, user_id, redactor)
             except MemoryConflict as exc:
                 raise HTTPException(409, str(exc)) from exc
+        surface.events.publish(TurnEvent(dot_id, "memory", {"version": version.id, "status": version.status}))
         return memory_version_view(version, redactor)
 
     @app.post("/schedules/{dot_id}/{name}", status_code=202)

@@ -197,8 +197,11 @@ def run_agent_turn(
             if schedule.kind == "reflection":
                 # No agent on the dot's thread: reflection drafts edits, then the gate replays and applies them.
                 drafter = reflection_model(settings, model)
-                run_reflection(repos, runtime.store, dot, schedule, drafter, settings, runtime.redactor)
-                gate_proposed(repos, runtime, dot, settings, supervisor_model(settings, model))
+                reflection = run_reflection(repos, runtime.store, dot, schedule, drafter, settings, runtime.redactor)
+                judged = gate_proposed(repos, runtime, dot, settings, supervisor_model(settings, model))
+                if reflection.edits or judged:
+                    detail: Json = {"proposed": len(reflection.edits), "judged": [v.id for v in judged]}
+                    events.publish(TurnEvent(dot.dot_id, "memory", detail))
                 return
             scheduled = scheduled_runs.prepare(repos, dot, batch[0], settings)
             if scheduled is None:
